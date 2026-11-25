@@ -1,9 +1,13 @@
 # PewPewPilot · Full Self-Guessing
 
-Interactive Tesla-cockpit sensor viewer for **128-channel Ouster LiDAR**, calibrated stereo cameras, and **local Apple Silicon MPS perception**. Compare the live forward camera (with LiDAR projection, AR drive path, and 2D detection brackets) alongside real-time 3D WebGL geometry rendered from **RT-DETR** + **Depth Anything V2** fused with raw laser returns.
+Interactive autonomous-cockpit sensor viewer for **128-channel Ouster LiDAR**, calibrated stereo cameras, and **local Apple Silicon MPS perception**. Compare the live forward camera (with LiDAR projection, AR drive path, and 2D detection brackets) alongside real-time 3D WebGL geometry rendered from **RT-DETR** + **Depth Anything V2** fused with raw laser returns.
 
 <p align="center">
-  <img src="docs/how-it-works.svg" alt="How PewPewPilot works: Raw Ouster OS1-128 LiDAR and Forward Camera flow through local MPS RT-DETR + Depth Anything V2 sensor fusion to render a WebGL FSD cockpit with 3D road mesh, 3D vehicle/pedestrian boxes, and dense RGB depth completion." width="780">
+  <img src="docs/cockpit-demo.gif" alt="Live PewPewPilot cockpit view cycling through Video + LiDAR detection brackets and 3D Chase road mesh with detected vehicles" width="780">
+</p>
+
+<p align="center">
+  <img src="docs/how-it-works.svg" alt="How PewPewPilot works: Raw Ouster OS1-128 LiDAR and Forward Camera flow through local MPS RT-DETR + Depth Anything V2 sensor fusion to render a WebGL cockpit with 3D road mesh, 3D vehicle/pedestrian boxes, and dense RGB depth completion." width="780">
 </p>
 
 ## How it works
