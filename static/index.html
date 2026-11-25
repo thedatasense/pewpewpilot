@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#070a0f">
+  <title>PewPewPilot · Full Self-Guessing</title>
+  <link rel="stylesheet" href="/viewer.css?v=4">
+  <script type="module" src="/viewer.js?v=4"></script>
+</head>
+<body>
+  <main class="cockpit" data-stage="video">
+    <h1 class="sr-only">PewPewPilot Full Self-Guessing Sensor Cockpit</h1>
+
+    <section class="stage" id="main-stage" aria-label="Primary sensor view">
+      <div class="scene camera-scene" id="camera-scene">
+        <canvas id="camera" aria-label="Sensor camera image with LiDAR projection"></canvas>
+        <div id="camera-empty" class="empty">Loading camera…</div>
+        <div id="camera-marker" class="marker" hidden></div>
+        <div id="image-size" class="image-size" hidden></div>
+        <div id="camera-legend" class="camera-legend" hidden><span></span> Near <span></span> Far</div>
+      </div>
+    </section>
+
+    <div class="hud">
+      <p id="status" class="status" role="status" hidden></p>
+
+      <section class="hud-card hud-drive" aria-label="Drive status and sequence">
+        <div class="drive-top">
+          <div class="gears" aria-label="Drive gear">
+            <span>P</span><span>R</span><span>N</span><strong class="gear-active">D</strong>
+          </div>
+          <span class="mode-pill">
+            <span class="mode-dot" aria-hidden="true"></span>
+            SPINNY HAT
+          </span>
+          <span id="source" class="source-pill" hidden></span>
+        </div>
+
+        <div class="speed-row">
+          <strong id="hud-speed" class="speed-num">—</strong>
+          <div class="speed-meta">
+            <span id="hud-speed-unit">NO GPS</span>
+            <span class="max-badge">128 LASERS</span>
+          </div>
+        </div>
+
+        <div class="route-box">
+          <label class="route-label" for="sequence">Route</label>
+          <select id="sequence" disabled><option>Loading…</option></select>
+          <span id="hud-route-sub" class="route-sub">OS1-128 · Waiting for returns</span>
+        </div>
+      </section>
+
+      <section class="hud-card hud-map" aria-label="Top-down radar mini-map">
+        <div class="map-head">
+          <span id="hud-env" class="env-pill">SCANNING</span>
+          <span id="hud-clock" class="sub-mono">10 Hz</span>
+        </div>
+        <button id="minimap-toggle" class="minimap-wrap" type="button" aria-label="Toggle top-down bird's-eye view">
+          <canvas id="minimap" aria-label="Top-down LiDAR radar mini-map"></canvas>
+          <span class="minimap-badge">BEV RADAR</span>
+        </button>
+      </section>
+
+      <section id="camera-card" class="hud-card hud-media" aria-label="Picture-in-picture sensor and playback">
+        <div class="pip-slot" id="pip-slot">
+          <div class="scene cloud-scene" id="cloud-scene">
+            <canvas id="cloud" aria-label="Interactive 3D LiDAR point cloud"></canvas>
+            <div id="cloud-empty" class="empty">Waking up the roof lasers…</div>
+            <div id="cloud-marker" class="marker" hidden></div>
+            <div id="orientation" class="orientation" hidden>↑ FORWARD</div>
+            <span id="scene-scale" class="scene-scale" hidden></span>
+          </div>
+          <div class="pip-actions">
+            <button id="swap-stage" class="pip-btn" type="button" aria-label="Swap main view and picture-in-picture" title="Swap main view">⇄</button>
+            <button id="expand-camera" class="pip-btn" type="button" aria-pressed="false" aria-label="Expand picture-in-picture view" title="Expand">⤢</button>
+          </div>
+        </div>
+
+        <div class="media-body">
+          <div class="media-head">
+            <div>
+              <h2 id="camera-title">Forward camera</h2>
+              <span id="camera-subtitle" class="sub-mono">Image 02 · color</span>
+            </div>
+            <label class="sr-only" for="modality">Sensor image</label>
+            <select id="modality">
+              <option value="image_02">Color cam</option>
+              <option value="image_01">Mono cam</option>
+              <option value="ambient">360° Ambient</option>
+              <option value="reflec">360° Reflectivity</option>
+            </select>
+          </div>
+
+          <div class="media-controls">
+            <div class="transport">
+              <button id="previous" type="button" class="transport-small" aria-label="Previous frame" disabled>‹</button>
+              <button id="play" type="button" class="play" aria-label="Play (Space)" disabled>▶</button>
+              <button id="next" type="button" class="transport-small" aria-label="Next frame" disabled>›</button>
+            </div>
+            <div class="rate">
+              <label class="sr-only" for="speed">Playback speed</label>
+              <select id="speed">
+                <option value=".5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="2">2×</option>
+                <option value="5">5×</option>
+              </select>
+              <button id="loop" type="button" aria-pressed="true">Loop</button>
+            </div>
+            <label class="switch"><input id="overlay" type="checkbox" checked disabled><span>Project lasers</span></label>
+          </div>
+
+          <div class="scrubber">
+            <div class="timeline-label">
+              <label for="timeline">FRAME <output id="frame-id">······</output></label>
+              <span id="frame-position">0 / 0</span>
+            </div>
+            <input id="timeline" type="range" min="0" max="0" value="0" disabled>
+          </div>
+        </div>
+      </section>
+
+      <section class="hud-card hud-trip" aria-label="Scan progress and point inspection">
+        <div class="trip-head">
+          <div>
+            <h2 id="inspection-title">Return inspector</h2>
+            <span id="point-count" class="sub-mono">Waiting for points</span>
+          </div>
+          <button id="clear-point" type="button" class="quiet" hidden>Clear</button>
+        </div>
+
+        <div class="trip-progress">
+          <label class="sr-only" for="frame-progress">Sequence progress</label>
+          <progress id="frame-progress" max="1" value="0">0%</progress>
+        </div>
+
+        <p id="inspection-help" class="trip-help">Click any dot in the scan to inspect distance &amp; match it across views.</p>
+
+        <dl id="measurement" class="measurement" hidden>
+          <div><dt>Range</dt><dd id="measure-range"></dd></div>
+          <div><dt>Forward</dt><dd id="measure-forward"></dd></div>
+          <div><dt>Left</dt><dd id="measure-left"></dd></div>
+          <div><dt>Height</dt><dd id="measure-height"></dd></div>
+          <div><dt>Intensity</dt><dd id="measure-intensity"></dd></div>
+        </dl>
+
+        <p id="projection-hint" class="hint-line">Overlay color matches the active palette.</p>
+      </section>
+    </div>
+  </main>
+
+  <footer class="dock" aria-label="Cockpit controls">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div class="brand-text">
+        <strong>PewPewPilot</strong>
+        <span>Full Self-Guessing</span>
+      </div>
+    </div>
+
+    <div class="dock-center">
+      <div class="segments" role="group" aria-label="Primary view mode">
+        <button type="button" data-view="video" aria-pressed="true">Video + LiDAR</button>
+        <button type="button" data-view="chase" aria-pressed="false">3D Chase</button>
+        <button type="button" data-view="top" aria-pressed="false">BEV</button>
+        <button type="button" data-view="ego" aria-pressed="false">Hood</button>
+        <button type="button" data-view="front" aria-pressed="false">Front</button>
+      </div>
+      <button id="reset-view" type="button" class="dock-btn">Reset</button>
+
+      <label class="inline-label">
+        <span>Color</span>
+        <select id="color">
+          <option value="range" selected>Range</option>
+          <option value="height">Height</option>
+          <option value="intensity">Intensity</option>
+        </select>
+      </label>
+
+      <button type="button" class="dock-btn" popovertarget="settings-popover">Settings</button>
+      <button type="button" class="dock-btn" popovertarget="telemetry-popover">Telemetry</button>
+    </div>
+
+    <div class="legend-inline" aria-label="Point color scale">
+      <span id="legend-title">Distance</span>
+      <span id="legend-min" class="sub-mono">0 m</span>
+      <div id="legend-ramp" class="legend-ramp"></div>
+      <span id="legend-max" class="sub-mono">75 m</span>
+    </div>
+  </footer>
+
+  <div id="settings-popover" popover="auto" class="hud-popover" aria-label="Display settings">
+    <header class="popover-head">
+      <h2>Display settings</h2>
+      <button type="button" class="quiet" popovertarget="settings-popover" popovertargetaction="hide">Done</button>
+    </header>
+    <div class="settings">
+      <label for="range">Max range <output for="range"></output><input id="range" type="range" min="5" max="150" value="75"></label>
+      <label for="min-height">Lower height <output for="min-height"></output><input id="min-height" type="range" min="-10" max="0" value="-2" step=".1"></label>
+      <label for="max-height">Upper height <output for="max-height"></output><input id="max-height" type="range" min="0" max="25" value="8" step=".1"></label>
+      <label for="intensity">Min intensity <output for="intensity"></output><input id="intensity" type="range" min="0" max="100" value="0" step="1"></label>
+      <label for="point-size">Point size <output for="point-size"></output><input id="point-size" type="range" min="1" max="6" value="2" step=".5"></label>
+      <label for="stride">Display sampling
+        <select id="stride">
+          <option value="1">All received</option>
+          <option value="2">Every 2nd</option>
+          <option value="4">Every 4th</option>
+          <option value="8">Every 8th</option>
+        </select>
+      </label>
+      <label for="opacity">Overlay opacity <output for="opacity"></output><input id="opacity" type="range" min="10" max="100" value="75"></label>
+      <label for="overlay-size">Overlay dot size <output for="overlay-size"></output><input id="overlay-size" type="range" min="1" max="5" value="2.5" step=".5"></label>
+      <div class="guides">
+        <label for="grid"><input id="grid" type="checkbox" checked><span>Grid &amp; rings</span></label>
+        <label for="vehicle"><input id="vehicle" type="checkbox" checked><span>Ego car &amp; path</span></label>
+        <label for="axes"><input id="axes" type="checkbox"><span>Axes</span></label>
+        <button id="reset-settings" type="button" class="quiet">Reset all</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="telemetry-popover" popover="auto" class="hud-popover" aria-label="Vehicle telemetry">
+    <header class="popover-head">
+      <h2>Sensor &amp; vehicle telemetry</h2>
+      <button type="button" class="quiet" popovertarget="telemetry-popover" popovertargetaction="hide">Close</button>
+    </header>
+    <dl id="telemetry" class="telemetry"></dl>
+  </div>
+</body>
+</html>

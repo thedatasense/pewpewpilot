@@ -1,0 +1,7 @@
+data/
+durlar-railway/
+*.zip
+*.html
+__pycache__/
+.DS_Store
+.git/
