@@ -1,37 +1,53 @@
-# DurLAR Sensor Viewer
+# PewPewPilot · Full Self-Guessing
 
-Compare the forward camera and the 360° LiDAR point cloud from the same frame. The included drive contains 50 synthetic frames. Each dot represents a LiDAR return. Its color can show distance, height relative to the sensor, or return intensity.
+Interactive Tesla-cockpit sensor viewer for **128-channel Ouster LiDAR**, calibrated stereo cameras, and **local Apple Silicon MPS perception**. Compare the live forward camera (with LiDAR projection, AR drive path, and 2D detection brackets) alongside real-time 3D WebGL geometry rendered from **RT-DETR** + **Depth Anything V2** fused with raw laser returns.
+
+<p align="center">
+  <img src="docs/how-it-works.svg" alt="How PewPewPilot works: Raw Ouster OS1-128 LiDAR and Forward Camera flow through local MPS RT-DETR + Depth Anything V2 sensor fusion to render a WebGL FSD cockpit with 3D road mesh, 3D vehicle/pedestrian boxes, and dense RGB depth completion." width="780">
+</p>
+
+## How it works
+
+1. **Raw Sensors ([`durlar_loader.py`](durlar_loader.py))**: Streams 262k-point OS1-128 LiDAR frames (`[x, y, z, intensity]`), forward camera images (`image_02` / `image_01`), and LiDAR panoramic modalities (`ambient` / `reflec`) using calibrated `P_rect` + `R|T` extrinsics.
+2. **Local MPS Sensor Fusion ([`perception.py`](perception.py))**: Aligns `Depth-Anything-V2-Small-hf` affine depth to metric LiDAR returns via 2-stage MAD-trimmed least squares, pairs `PekingU/rtdetr_r50vd` 2D detections with clustered LiDAR PCA heading angles, and caches compressed JSON geometry (`road_mesh`, `dense_points`, `objects`) under `data/<sequence>/perception/` (`<2 ms` once cached).
+3. **WebGL Cockpit HUD ([`static/point-cloud.js`](static/point-cloud.js), [`static/viewer.js`](static/viewer.js))**: Combines full-bleed `Video + LiDAR` overlay with an expandable `3D Chase` / `BEV Radar` PIP, smooth shaded 3D terrain mesh, oriented 3D cars/pedestrians/signs, and dense foreground RGB completion.
 
 ## Start the viewer
 
-Install the Python packages if needed.
+Install the core Python packages (and optionally `torch transformers accelerate` for local **`FSD AI`** perception on Apple Silicon MPS or CPU):
 
 ```sh
 python3 -m pip install fastapi uvicorn numpy pandas pillow
+# Optional for local FSD AI perception (3D vehicles, road mesh, dense depth fill):
+python3 -m pip install torch transformers accelerate
 ./run_viewer.sh
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). To use another port, pass it as the first argument to the launcher. If the sample is missing, run `python3 generate_sample_data.py` and reload.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Pass a port argument (`./run_viewer.sh 8080`) if needed. If the synthetic sample is missing, run `python3 generate_sample_data.py` and reload.
 
-To open the sample without a server, run `python3 export_sample_viewer.py` and open `durlar-viewer.html` in a current browser. The file contains the full synthetic drive. The server UI can open additional sequences from the project's `data/` directory.
+To export the synthetic or recorded sequence into a standalone single-file browser bundle without running a server:
 
-## Read the views
+```sh
+python3 export_sample_viewer.py pewpewpilot-viewer.html
+```
 
-| Control | What it shows |
+## Cockpit controls
+
+| Control | What it does |
 | --- | --- |
-| **Top** | Looking down at the scene. The arrow marks the front of the reference vehicle. |
-| **3D**, **Ego**, **Front** | Orbit, look from the LiDAR origin, or look back at the vehicle from ahead. |
-| **Project LiDAR** | Draw a sample of visible LiDAR returns on the camera frame using the sequence calibration. |
-| **Inspect a return** | Click a point in the cloud or on the camera overlay to measure it and mark its matching position. A return can fall outside the forward camera view. |
-| **Ambient**, **Reflectivity** | Switch to the 360° images from the LiDAR. |
-| **Display settings** | Change range, height, intensity, point density, overlay appearance, or reference guides. |
-| **Playback** | Use the controls, Space, or the arrow keys to move through the frames. The 1× target is 10 frames per second. |
+| **Video + LiDAR** | Full-screen forward camera with calibrated LiDAR overlay, AR blue drive path, and corner detection brackets (3D Chase stays live in the PIP). |
+| **3D Chase**, **BEV**, **Hood**, **Front** | Orbit in low chase perspective behind the ego vehicle, top-down Bird’s-Eye View radar, LiDAR hood origin, or front-facing lookback. |
+| **FSD AI** | Toggle local MPS perception (`3D objects`, smooth `3D road mesh`, and `dense depth fill`). Open Settings → **Precompute 60f** to pre-cache frames ahead for 10 Hz playback. |
+| **Project lasers** | Overlay filtered LiDAR returns onto the camera frame using sequence calibration and active color palette. |
+| **Return inspector** | Click any point in the 3D scan or camera overlay to measure metric `Range`, `Forward`, `Left`, `Height`, and `Intensity` across views. |
+| **360° Ambient / Reflectivity** | Switch the camera feed to the roof LiDAR’s panoramic ambient light or surface reflectivity images. |
+| **Playback** | Space to play/pause (`0.5×–5×`, `1×` target = 10 Hz), arrow keys or timeline scrubber to step frames. |
 
-The measurements use LiDAR coordinates. Positive forward, left, and height are the x, y, and z axes. The projected marker shows where a measured point lands in the image. Occlusion and viewpoint differences can affect what’s visible there.
+Measurements use LiDAR coordinates where positive forward, left, and height correspond to `+x`, `+y`, and `+z`.
 
-## View recorded DurLAR frames
+## View recorded DurLAR drives
 
-Download 12 paired frames from the first [DurLAR_S exemplar drive](https://huggingface.co/datasets/l1997i/DurLAR_S) and make a browser file.
+Download 12 paired frames from the first [DurLAR_S exemplar drive](https://huggingface.co/datasets/l1997i/DurLAR_S) or export a standalone offline bundle:
 
 ```sh
 python3 -m pip install huggingface_hub
@@ -39,24 +55,22 @@ python3 download_durlar.py --exemplar-only --frames 12
 python3 export_sample_viewer.py durlar-recorded.html --sequence data/DurLAR_20210716_S
 ```
 
-Open `durlar-recorded.html` in your browser. If you start the local server instead, it selects the recorded drive by default when it finds one. The downloader pairs images and point clouds by their frame IDs. Camera overlay uses the [authors' calibration](https://github.com/l1997i/DurLAR/blob/main/DurLAR_calibs.zip).
-
-To download all paired LiDAR and image frames from every exemplar drive, run:
+Or download all paired LiDAR and image frames from every exemplar drive under `data/`:
 
 ```sh
 python3 download_durlar.py --all-drives --all-frames
 ```
 
-Rerun the same command to resume. It skips files already present and saves each drive under `data/`. Use `--all-drives --frames 12` for a short clip from each drive. The server viewer lists each downloaded drive in the sequence menu.
+Rerun to resume cleanly (`--all-drives --frames 12` pulls short clips). Camera projection uses the [authors' calibration](https://github.com/l1997i/DurLAR/blob/main/DurLAR_calibs.zip).
 
-The source is *DurLAR: A High-fidelity 128-channel LiDAR Dataset with Panoramic Ambient and Reflectivity Imagery for Multi-modal Autonomous Driving Applications*, Li Li, Khalid N. Ismail, Hubert P. H. Shum, and Toby P. Breckon, 3D Vision, 2021. [Paper](https://arxiv.org/abs/2406.10068).
+Source dataset: *DurLAR: A High-fidelity 128-channel LiDAR Dataset with Panoramic Ambient and Reflectivity Imagery for Multi-modal Autonomous Driving Applications*, Li Li, Khalid N. Ismail, Hubert P. H. Shum, and Toby P. Breckon, 3D Vision, 2021. [Paper](https://arxiv.org/abs/2406.10068).
 
 ## Load another sequence
 
-Place an extracted sequence directly under `data/`. Keep the sensor folders and calibration files together. The server expects point records in little-endian `[x, y, z, intensity]` float32 format. The overlay requires a LiDAR-to-camera transform and the projection matrix for the chosen image.
+Place an extracted sequence directly under `data/` keeping sensor folders and calibration files together. The server expects little-endian `[x, y, z, intensity]` float32 point records plus LiDAR-to-camera extrinsics and camera projection matrices for image overlays.
 
-See the [DurLAR dataset](https://huggingface.co/datasets/l1997i/DurLAR) and `python3 download_durlar.py --help` for the existing download options.
+See the [DurLAR dataset](https://huggingface.co/datasets/l1997i/DurLAR) and `python3 download_durlar.py --help` for dataset options.
 
 ## Railway deployment
 
-See [Railway setup](RAILWAY.md) for the one-drive Hobby deployment.
+See [Railway setup](RAILWAY.md) for hosting a read-only single-drive instance on Railway Hobby.

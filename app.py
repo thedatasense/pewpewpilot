@@ -18,6 +18,7 @@ import uvicorn
 from durlar_loader import scan_for_sequences, DurLARSequence
 import download_durlar
 import generate_sample_data
+import perception
 
 app = FastAPI(title="DurLAR LiDAR Dataset Viewer", version="1.0.0")
 
@@ -145,6 +146,62 @@ def get_telemetry_endpoint(seq_id: str, frame_id: str):
     seq = get_frame_sequence(seq_id, frame_id)
     return seq.get_telemetry(frame_id)
 
+
+def _perception_cache_dir(seq: DurLARSequence) -> str:
+    return os.path.join(seq.path, "perception")
+
+
+@app.get("/api/sequence/{seq_id}/frame/{frame_id}/perception")
+def get_frame_perception(seq_id: str, frame_id: str):
+    seq = get_frame_sequence(seq_id, frame_id)
+    cache_dir = _perception_cache_dir(seq)
+    if READ_ONLY and not os.path.isfile(os.path.join(cache_dir, f"{frame_id}.json")):
+        raise HTTPException(status_code=404, detail="Perception not precomputed in read-only mode")
+    return perception.run_frame_perception(seq, frame_id, cache_dir=cache_dir)
+
+
+@app.get("/api/sequence/{seq_id}/perception/status")
+def get_perception_status(seq_id: str):
+    seq = get_seq(seq_id)
+    cache_dir = _perception_cache_dir(seq)
+    cached = 0
+    if os.path.isdir(cache_dir):
+        cached = sum(1 for fid in seq.frames if os.path.isfile(os.path.join(cache_dir, f"{fid}.json")))
+    return {
+        "sequence": seq_id,
+        "cached_frames": cached,
+        "total_frames": len(seq.frames),
+        "device": perception.get_device(),
+        "read_only": READ_ONLY,
+    }
+
+
+def _warmup_sequence(seq: DurLARSequence, start_index: int, count: int):
+    cache_dir = _perception_cache_dir(seq)
+    for fid in seq.frames[start_index : start_index + count]:
+        try:
+            perception.run_frame_perception(seq, fid, cache_dir=cache_dir)
+        except Exception:
+            continue
+
+
+def trigger_perception_warmup(
+    seq_id: str,
+    background_tasks: BackgroundTasks,
+    start: int = Query(0, ge=0),
+    count: int = Query(60, ge=1, le=600),
+):
+    seq = get_seq(seq_id)
+    background_tasks.add_task(_warmup_sequence, seq, start, count)
+    return {
+        "status": "queued",
+        "sequence": seq_id,
+        "start": start,
+        "count": min(count, max(0, len(seq.frames) - start)),
+        "device": perception.get_device(),
+    }
+
+
 def trigger_generate_sample(frames: int = Query(10, ge=1, le=50)):
     generate_sample_data.main(num_frames=frames)
     get_sequences()
@@ -157,6 +214,7 @@ def trigger_hf_download(background_tasks: BackgroundTasks, repo_id: str = downlo
 if not READ_ONLY:
     app.post("/api/generate_sample")(trigger_generate_sample)
     app.post("/api/hf/download_sample")(trigger_hf_download)
+    app.post("/api/sequence/{seq_id}/perception/warmup")(trigger_perception_warmup)
 
 # Serve static web viewer files
 @app.middleware("http")

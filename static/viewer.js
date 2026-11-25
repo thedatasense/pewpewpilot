@@ -1,7 +1,7 @@
 import {
   palettes, colorAt, preset, viewTransform, screenPoint, resizeCanvas,
   createPointRenderer, cameraProjection, projectWorldPoint, imagePoint,
-} from './point-cloud.js?v=4';
+} from './point-cloud.js?v=5';
 
 if (!Object.hasOwn(HTMLElement.prototype, 'popover')) {
   import('https://unpkg.com/@oddbird/popover-polyfill@latest/dist/popover.min.js').catch(() => {});
@@ -20,6 +20,7 @@ lightProbe.height = 8;
 const lightProbeContext = lightProbe.getContext('2d', { willReadFrequently: true });
 
 const emptyPoints = new Float32Array();
+const emptyFloats = new Float32Array();
 const imageTypes = {
   image_02: ['Forward camera', 'Image 02 · color'],
   image_01: ['Forward camera', 'Image 01 · monochrome'],
@@ -43,11 +44,21 @@ const modeBuckets = Object.fromEntries(
 );
 const state = {
   info: null, frame: null, requestedIndex: 0, sequenceRequest: null, frameRequest: null,
-  points: emptyPoints, selected: -1, drawing: false, timer: null, playing: false, playbackRun: 0,
-  stageMode: 'video', view: preset('chase'), transform: null, imageTransform: null, speedUnit: 'kmh',
+  prefetch: null, points: emptyPoints, selected: -1, drawing: false, timer: null, warmupTimer: null,
+  playing: false, playbackRun: 0, stageMode: 'video', view: preset('chase'),
+  transform: null, imageTransform: null, speedUnit: 'kmh',
 };
 const pointCache = new Map();
+const perceptionCache = new Map();
 let settings;
+
+function decodeFloat32B64(b64) {
+  if (!b64) return emptyFloats;
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.byteLength % 4 === 0 ? new Float32Array(bytes.buffer) : emptyFloats;
+}
 
 function setStatus(message) {
   $('status').textContent = message;
@@ -57,12 +68,17 @@ function setStatus(message) {
 function readSettings() {
   const number = (id) => Number($(id).value);
   const maxIntensity = Math.max(1, state.frame?.p98Intensity || state.frame?.maxIntensity || 1);
+  const fsdAi = $('fsd-toggle')?.getAttribute('aria-pressed') === 'true';
   settings = {
     mode: $('color').value, maxRange: number('range'), minHeight: number('min-height'),
     maxHeight: number('max-height'), minIntensity: (number('intensity') / 100) * maxIntensity,
     maxIntensity, pointSize: number('point-size'),
     stride: number('stride'), opacity: number('opacity') / 100, overlaySize: number('overlay-size'),
     grid: $('grid').checked, vehicle: $('vehicle').checked, axes: $('axes').checked,
+    fsdAi,
+    fsdRoad: fsdAi && ($('fsd-road')?.checked ?? true),
+    fsdDepthFill: fsdAi && ($('fsd-depth')?.checked ?? true),
+    fsdObjects: fsdAi && ($('fsd-objects')?.checked ?? true),
   };
   for (const [id, unit] of Object.entries(sliders)) {
     document.querySelector(`output[for="${id}"]`).value = $(id).value + unit;
@@ -82,6 +98,24 @@ function readSettings() {
     dots[0].style.background = palettes[settings.mode][0];
     dots[1].style.background = palettes[settings.mode][2];
   }
+}
+
+function updateRouteSubtitle() {
+  const raw = state.frame?.raw || emptyPoints;
+  if (!raw.length) {
+    $('hud-route-sub').textContent = 'OS1-128 · Waiting for returns';
+    return;
+  }
+  const returnsCount = (state.points.length / 4).toLocaleString();
+  const perc = settings.fsdAi ? state.frame?.perception : null;
+  if (!perc) {
+    $('hud-route-sub').textContent = `OS1-128 · ${returnsCount} returns`;
+    return;
+  }
+  const dev = (perc.device || 'ai').toUpperCase();
+  const timing = perc.cached ? 'cached' : `${Math.round(perc.inference_ms || 0)}ms`;
+  const count = perc.objects?.length || 0;
+  $('hud-route-sub').textContent = `OS1-128 · ${returnsCount} pts · ${count} obj · ${dev} ${timing}`;
 }
 
 function filterPoints() {
@@ -106,7 +140,7 @@ function filterPoints() {
   const totalCount = (raw.length / 4).toLocaleString();
   const sampling = state.frame?.streamStride > 1 ? ` · 1/${state.frame.streamStride}` : '';
   $('point-count').textContent = raw.length ? `${returnsCount} / ${totalCount} pts${sampling}` : 'No returns';
-  $('hud-route-sub').textContent = raw.length ? `OS1-128 · ${returnsCount} returns` : 'OS1-128 · Waiting for returns';
+  updateRouteSubtitle();
   $('cloud-empty').hidden = n > 0;
   $('cloud-empty').textContent = raw.length ? 'No points match the current filters.' : 'No laser returns for this frame.';
 }
@@ -133,6 +167,18 @@ function drawCloud() {
     scale.textContent = `${meters} m`;
   }
 }
+
+const perceptionPalette = {
+  person: { stroke: '#fb923c', fill: 'rgba(251, 146, 60, 0.85)', boxFill: 'rgba(251, 146, 60, 0.10)', kind: 'person' },
+  bicycle: { stroke: '#22d3ee', fill: 'rgba(34, 211, 238, 0.85)', boxFill: 'rgba(34, 211, 238, 0.10)', kind: 'cycle' },
+  motorcycle: { stroke: '#22d3ee', fill: 'rgba(34, 211, 238, 0.85)', boxFill: 'rgba(34, 211, 238, 0.10)', kind: 'cycle' },
+  'traffic light': { stroke: '#facc15', fill: 'rgba(250, 204, 21, 0.85)', boxFill: 'rgba(250, 204, 21, 0.08)', kind: 'sign' },
+  'stop sign': { stroke: '#facc15', fill: 'rgba(250, 204, 21, 0.85)', boxFill: 'rgba(250, 204, 21, 0.08)', kind: 'sign' },
+};
+const defaultPerceptionStyle = {
+  stroke: '#60a5fa', fill: 'rgba(96, 165, 250, 0.80)', boxFill: 'rgba(56, 189, 248, 0.09)', kind: 'vehicle',
+};
+const perceptionStyle = (label) => perceptionPalette[label] || defaultPerceptionStyle;
 
 function drawMinimap() {
   const { width, height, ratio } = resizeCanvas(minimap);
@@ -171,6 +217,43 @@ function drawMinimap() {
     ctx.fillRect(mx, my, 1.5, 1.5);
   }
 
+  const objects = settings.fsdAi && settings.fsdObjects ? state.frame?.perception?.objects : null;
+  if (objects?.length) {
+    for (const obj of objects) {
+      if (!obj.center) continue;
+      const mx = cx - obj.center[1] * pxPerMeter;
+      const my = cy - obj.center[0] * pxPerMeter;
+      if (mx < -20 || mx >= width + 20 || my < -20 || my >= height + 20) continue;
+      const st = perceptionStyle(obj.label);
+      if (st.kind === 'person') {
+        ctx.fillStyle = st.fill;
+        ctx.beginPath();
+        ctx.arc(mx, my, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(251, 146, 60, 0.45)';
+        ctx.beginPath();
+        ctx.arc(mx, my, 5.5, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (st.kind === 'sign') {
+        ctx.fillStyle = st.fill;
+        ctx.fillRect(mx - 2, my - 2, 4, 4);
+      } else {
+        const [len = 4.4, wid = 1.9] = obj.size || [];
+        const bw = Math.max(4, wid * pxPerMeter);
+        const bh = Math.max(6, len * pxPerMeter);
+        ctx.save();
+        ctx.translate(mx, my);
+        ctx.rotate(-(obj.yaw || 0));
+        ctx.fillStyle = st.fill;
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 1;
+        ctx.fillRect(-bw / 2, -bh / 2, bw, bh);
+        ctx.strokeRect(-bw / 2, -bh / 2, bw, bh);
+        ctx.restore();
+      }
+    }
+  }
+
   ctx.fillStyle = '#fb923c';
   ctx.beginPath();
   ctx.moveTo(cx, cy - 7);
@@ -179,6 +262,51 @@ function drawMinimap() {
   ctx.lineTo(cx - 5, cy + 5);
   ctx.closePath();
   ctx.fill();
+}
+
+function drawCameraDetections(ctx, perception, ox, oy, scale, isMain) {
+  ctx.save();
+  ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.textBaseline = 'middle';
+  for (const obj of perception.objects) {
+    const box = obj.box2d;
+    if (!box || box.length < 4) continue;
+    const x1 = ox + box[0] * scale;
+    const y1 = oy + box[1] * scale;
+    const w = (box[2] - box[0]) * scale;
+    const h = (box[3] - box[1]) * scale;
+    if (w < 4 || h < 4) continue;
+    const st = perceptionStyle(obj.label);
+    const arm = Math.max(5, Math.min(13, w * 0.24, h * 0.24));
+
+    if (isMain) {
+      ctx.fillStyle = st.boxFill;
+      ctx.fillRect(x1, y1, w, h);
+    }
+
+    ctx.strokeStyle = st.stroke;
+    ctx.lineWidth = isMain ? 1.8 : 1.25;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1 + arm); ctx.lineTo(x1, y1); ctx.lineTo(x1 + arm, y1);
+    ctx.moveTo(x1 + w - arm, y1); ctx.lineTo(x1 + w, y1); ctx.lineTo(x1 + w, y1 + arm);
+    ctx.moveTo(x1 + w, y1 + h - arm); ctx.lineTo(x1 + w, y1 + h); ctx.lineTo(x1 + w - arm, y1 + h);
+    ctx.moveTo(x1 + arm, y1 + h); ctx.lineTo(x1, y1 + h); ctx.lineTo(x1, y1 + h - arm);
+    ctx.stroke();
+
+    if (!isMain && w < 28) continue;
+    const dist = obj.center ? Math.hypot(obj.center[0], obj.center[1]) : null;
+    const tag = dist !== null ? `${obj.label.toUpperCase()} ${dist.toFixed(1)}m` : obj.label.toUpperCase();
+    const tw = ctx.measureText(tag).width + 10;
+    const ty = Math.max(4, y1 - 18);
+    ctx.fillStyle = 'rgba(8, 13, 20, 0.84)';
+    ctx.fillRect(x1, ty, tw, 16);
+    ctx.strokeStyle = st.stroke;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x1, ty, tw, 16);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillText(tag, x1 + 5, ty + 8.5);
+  }
+  ctx.restore();
 }
 
 function drawCameraPathRibbon(ctx, projection, ox, oy, scale) {
@@ -308,6 +436,10 @@ function drawCamera() {
       }
     }
     cameraContext.globalAlpha = 1;
+  }
+
+  if (settings.fsdAi && settings.fsdObjects && frame.modality === 'image_02' && frame.perception?.objects?.length) {
+    drawCameraDetections(cameraContext, frame.perception, x, y, scale, isMainVideo);
   }
 
   const selected = state.selected < 0 ? null : imagePoint(state.points, state.selected, projection, image.width, image.height);
@@ -554,11 +686,111 @@ function updateDriveHud(frame) {
   $('hud-clock').textContent = frame ? `+${(frame.index * 0.1).toFixed(1)}s · 10 Hz` : '10 Hz';
 }
 
+async function fetchPerceptionData(base, signal) {
+  const response = await openResource(`${base}/perception`, signal);
+  if (response.status === 404 || !response.ok) return null;
+  const data = await response.json();
+  const parsed = {
+    frame_id: data.frame_id,
+    device: data.device,
+    inference_ms: data.inference_ms,
+    cached: data.cached,
+    objects: Array.isArray(data.objects) ? data.objects : [],
+    denseCount: data.dense_count || 0,
+    roadMesh: decodeFloat32B64(data.road_mesh_b64),
+    densePoints: decodeFloat32B64(data.dense_points_b64),
+  };
+  perceptionCache.set(base, parsed);
+  if (perceptionCache.size > 80) perceptionCache.delete(perceptionCache.keys().next().value);
+  return parsed;
+}
+
+async function loadPerception(base, signal) {
+  if (document.getElementById('sample-data') || !settings?.fsdAi) return null;
+  if (perceptionCache.has(base)) {
+    const cached = perceptionCache.get(base);
+    perceptionCache.delete(base);
+    perceptionCache.set(base, cached);
+    return cached;
+  }
+  if (state.prefetch?.base === base && !state.prefetch.signal.aborted) {
+    const pending = state.prefetch;
+    state.prefetch = null;
+    const forwardAbort = () => pending.controller.abort();
+    signal?.addEventListener('abort', forwardAbort, { once: true });
+    try {
+      return await pending.promise;
+    } finally {
+      signal?.removeEventListener('abort', forwardAbort);
+    }
+  }
+  return fetchPerceptionData(base, signal);
+}
+
+function schedulePrefetch(sequence, frames, nextIndex) {
+  if (document.getElementById('sample-data') || !settings?.fsdAi) return;
+  if (!frames || nextIndex < 0 || nextIndex >= frames.length) return;
+  const nextBase = `/api/sequence/${encodeURIComponent(sequence)}/frame/${encodeURIComponent(frames[nextIndex])}`;
+  if (perceptionCache.has(nextBase) || state.prefetch?.base === nextBase) return;
+  state.prefetch?.controller.abort();
+  const controller = new AbortController();
+  state.prefetch = {
+    base: nextBase,
+    controller,
+    signal: controller.signal,
+    promise: fetchPerceptionData(nextBase, controller.signal).catch(() => null),
+  };
+}
+
+function applyPerceptionToScene(frame) {
+  const perc = settings?.fsdAi ? frame?.perception : null;
+  if (perc) {
+    renderer.uploadPerception(perc.roadMesh, perc.densePoints, perc.objects);
+  } else {
+    renderer.uploadPerception(emptyFloats, emptyFloats, []);
+  }
+  updateRouteSubtitle();
+}
+
+function stopWarmupPolling() {
+  clearInterval(state.warmupTimer);
+  state.warmupTimer = null;
+}
+
+async function refreshPerceptionStatus(seqId = state.info?.id) {
+  const el = $('warmup-status');
+  const btn = $('warmup-btn');
+  if (!el) return null;
+  if (!seqId || document.getElementById('sample-data')) {
+    el.textContent = 'Offline bundle (AI disabled)';
+    if (btn) btn.disabled = true;
+    return null;
+  }
+  try {
+    const response = await openResource(`/api/sequence/${encodeURIComponent(seqId)}/perception/status`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const st = await response.json();
+    const dev = (st.device || 'cpu').toUpperCase();
+    if (st.read_only) {
+      el.textContent = `${st.cached_frames} / ${st.total_frames} cached · read-only`;
+      if (btn) btn.disabled = true;
+    } else {
+      el.textContent = `${st.cached_frames} / ${st.total_frames} cached (${dev})`;
+      if (btn && !state.warmupTimer) btn.disabled = false;
+    }
+    return st;
+  } catch {
+    el.textContent = 'AI perception unavailable';
+    return null;
+  }
+}
+
 function replaceFrame(frame) {
   state.frame?.image?.close();
   state.frame = frame;
   readSettings();
   filterPoints();
+  applyPerceptionToScene(frame);
   updateTelemetry(frame?.telemetry);
   updateDriveHud(frame);
   const modality = frame?.modality || $('modality').value;
@@ -584,11 +816,16 @@ async function selectFrame(index) {
   $('timeline').setAttribute('aria-valuetext', `Frame ${id}, ${index + 1} of ${frames.length}`);
   setStatus('');
   const base = `/api/sequence/${encodeURIComponent(sequence)}/frame/${encodeURIComponent(id)}`;
+  if (state.prefetch?.base && state.prefetch.base !== base) {
+    state.prefetch.controller.abort();
+    state.prefetch = null;
+  }
   const reusable = state.frame?.id === id && state.frame.modality === modality && state.frame.image;
-  const [points, image, telemetry] = await Promise.allSettled([
+  const [points, image, telemetry, perception] = await Promise.allSettled([
     loadPoints(base, signal),
     reusable ? Promise.resolve(null) : loadImage(base, modality, signal),
     request(`${base}/telemetry`, signal).then((response) => response.json()),
+    loadPerception(base, signal),
   ]);
   if (signal.aborted) {
     image.value?.close();
@@ -600,6 +837,7 @@ async function selectFrame(index) {
     id, index, modality, ...points.value, raw: points.value?.raw || emptyPoints,
     image: frameImage,
     telemetry: telemetry.value,
+    perception: perception.status === 'fulfilled' ? perception.value : null,
     projection: cameraProjection(calibration, modality, frameImage),
   });
   const failures = [
@@ -609,6 +847,7 @@ async function selectFrame(index) {
   ].filter(Boolean);
   if (failures.length) setStatus(`Couldn’t load ${failures.join(', ')} for frame ${id}.`);
   updateControls();
+  schedulePrefetch(sequence, frames, index + 1);
   return true;
 }
 
@@ -623,13 +862,17 @@ function updateControls() {
 
 async function selectSequence(id) {
   stop();
+  stopWarmupPolling();
   state.sequenceRequest?.abort();
   state.frameRequest?.abort();
+  state.prefetch?.controller.abort();
+  state.prefetch = null;
   const controller = new AbortController();
   state.sequenceRequest = controller;
   state.info = null;
   state.requestedIndex = 0;
   pointCache.clear();
+  perceptionCache.clear();
   replaceFrame(null);
   updateControls();
   $('cloud-empty').textContent = 'Waking up the roof lasers…';
@@ -646,6 +889,7 @@ async function selectSequence(id) {
     $('source').hidden = false;
     $('timeline').max = Math.max(0, info.frames.length - 1);
     updateControls();
+    refreshPerceptionStatus(id);
     if (info.frames.length) await selectFrame(0);
     else setStatus('This route has no frames.');
   } catch (error) {
@@ -786,8 +1030,70 @@ $('loop').addEventListener('click', () => {
   const button = $('loop');
   button.setAttribute('aria-pressed', String(button.getAttribute('aria-pressed') === 'false'));
 });
-for (const id of ['range', 'min-height', 'max-height', 'intensity', 'stride', 'color', 'point-size', 'opacity', 'overlay-size', 'grid', 'vehicle', 'axes']) {
-  $(id).addEventListener('input', () => {
+$('fsd-toggle')?.addEventListener('click', () => {
+  const button = $('fsd-toggle');
+  const enabled = button.getAttribute('aria-pressed') === 'false';
+  button.setAttribute('aria-pressed', String(enabled));
+  readSettings();
+  if (!enabled) {
+    state.prefetch?.controller.abort();
+    state.prefetch = null;
+    applyPerceptionToScene(state.frame);
+    draw();
+    return;
+  }
+  if (state.frame && !state.frame.perception && !document.getElementById('sample-data')) {
+    selectFrame(state.requestedIndex);
+  } else {
+    applyPerceptionToScene(state.frame);
+    draw();
+  }
+});
+$('warmup-btn')?.addEventListener('click', async () => {
+  if (!state.info || document.getElementById('sample-data')) return;
+  const seqId = state.info.id;
+  const btn = $('warmup-btn');
+  const statusEl = $('warmup-status');
+  btn.disabled = true;
+  statusEl.textContent = 'Starting 60-frame MPS warmup…';
+  try {
+    const resp = await fetch(`/api/sequence/${encodeURIComponent(seqId)}/perception/warmup?start=${state.requestedIndex}&count=60`, { method: 'POST' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const initial = await refreshPerceptionStatus(seqId);
+    let prevCached = initial?.cached_frames ?? 0;
+    let stale = 0;
+    let ticks = 0;
+    stopWarmupPolling();
+    state.warmupTimer = setInterval(async () => {
+      ticks++;
+      if (state.info?.id !== seqId || ticks > 90) {
+        stopWarmupPolling();
+        btn.disabled = false;
+        return;
+      }
+      const cur = await refreshPerceptionStatus(seqId);
+      if (!cur) {
+        stopWarmupPolling();
+        btn.disabled = false;
+        return;
+      }
+      stale = cur.cached_frames === prevCached ? stale + 1 : 0;
+      prevCached = cur.cached_frames;
+      if (cur.cached_frames >= cur.total_frames || stale >= 5) {
+        stopWarmupPolling();
+        btn.disabled = false;
+      }
+    }, 1200);
+  } catch {
+    statusEl.textContent = 'Warmup unavailable';
+    btn.disabled = false;
+  }
+});
+$('settings-popover')?.addEventListener('toggle', (event) => {
+  if (event.newState === 'open' && state.info?.id) refreshPerceptionStatus(state.info.id);
+});
+for (const id of ['range', 'min-height', 'max-height', 'intensity', 'stride', 'color', 'point-size', 'opacity', 'overlay-size', 'grid', 'vehicle', 'axes', 'fsd-road', 'fsd-depth', 'fsd-objects']) {
+  $(id)?.addEventListener('input', () => {
     readSettings();
     if (['range', 'min-height', 'max-height', 'intensity', 'stride'].includes(id) && state.frame) filterPoints();
     draw();
@@ -795,10 +1101,18 @@ for (const id of ['range', 'min-height', 'max-height', 'intensity', 'stride', 'c
 }
 $('reset-settings').addEventListener('click', () => {
   for (const id of Object.keys(sliders)) $(id).value = $(id).defaultValue;
-  for (const id of ['grid', 'vehicle', 'axes']) $(id).checked = $(id).defaultChecked;
+  for (const id of ['grid', 'vehicle', 'axes', 'fsd-road', 'fsd-depth', 'fsd-objects']) {
+    if ($(id)) $(id).checked = $(id).defaultChecked;
+  }
+  $('fsd-toggle')?.setAttribute('aria-pressed', 'true');
   $('stride').selectedIndex = 0;
   $('color').selectedIndex = 0;
   readSettings();
+  if (state.frame && !state.frame.perception && !document.getElementById('sample-data')) {
+    selectFrame(state.requestedIndex);
+    return;
+  }
+  applyPerceptionToScene(state.frame);
   filterPoints();
   draw();
 });
@@ -821,4 +1135,5 @@ cloud.addEventListener('webglcontextlost', (event) => {
 });
 readSettings();
 renderer.upload(emptyPoints);
+renderer.uploadPerception(emptyFloats, emptyFloats, []);
 loadSequences();

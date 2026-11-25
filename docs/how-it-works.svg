@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="220" viewBox="0 0 780 220" role="img" aria-labelledby="title desc">
+  <title id="title">How PewPewPilot works</title>
+  <desc id="desc">128-channel Ouster LiDAR and forward RGB camera frames are fused locally on Apple Silicon MPS using RT-DETR and Depth Anything V2 to render a 3D FSD cockpit with smooth road mesh, 3D bounding boxes, dense foreground points, and video overlay.</desc>
+  <defs>
+    <linearGradient id="cardBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#090e17"/>
+      <stop offset="100%" stop-color="#0f1726"/>
+    </linearGradient>
+    <linearGradient id="pathGlow" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#2b7fff" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.1"/>
+    </linearGradient>
+    <linearGradient id="roadMesh" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#1e293b" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.35"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 z" fill="#38bdf8"/>
+    </marker>
+  </defs>
+
+  <!-- Outer dark cockpit card -->
+  <rect x="1" y="1" width="778" height="218" rx="14" fill="url(#cardBg)" stroke="#1e293b" stroke-width="1.5"/>
+
+  <!-- Subtle header strip -->
+  <circle cx="22" cy="20" r="4" fill="#fb923c"/>
+  <text x="34" y="24" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" font-weight="700" letter-spacing="0.06em" fill="#94a3b8">HOW PEWPEWPILOT WORKS · SENSOR-TO-COCKPIT PIPELINE</text>
+  <rect x="646" y="10" width="114" height="20" rx="10" fill="#132238" stroke="#2563eb" stroke-opacity="0.5"/>
+  <text x="703" y="23.5" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9.5" font-weight="600" fill="#60a5fa">10 Hz · LOCAL AI</text>
+
+  <!-- STAGE 1: SENSORS -->
+  <g transform="translate(20, 42)">
+    <rect width="214" height="158" rx="10" fill="#101927" stroke="#22324a"/>
+    <text x="14" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" font-weight="700" fill="#5bf7cc">1. RAW SENSORS</text>
+
+    <!-- LiDAR sub-block -->
+    <rect x="12" y="34" width="190" height="52" rx="7" fill="#0b121d" stroke="#1e293b"/>
+    <g transform="translate(33, 60)">
+      <circle r="13" fill="none" stroke="#1e3a5f" stroke-width="1"/>
+      <circle r="8.5" fill="none" stroke="#2dd4bf" stroke-opacity="0.55" stroke-width="1"/>
+      <circle r="3" fill="#5bf7cc"/>
+      <line x1="0" y1="0" x2="11" y2="-6.5" stroke="#5bf7cc" stroke-width="1.3"/>
+      <line x1="0" y1="0" x2="9" y2="8" stroke="#38bdf8" stroke-width="1.1"/>
+      <line x1="0" y1="0" x2="-10" y2="-5.5" stroke="#38bdf8" stroke-width="1.1"/>
+    </g>
+    <text x="54" y="55" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11.5" font-weight="600" fill="#f1f5f9">Ouster OS1-128</text>
+    <text x="54" y="72" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9" fill="#94a3b8">262k pts · x, y, z, I</text>
+
+    <!-- Camera sub-block -->
+    <rect x="12" y="94" width="190" height="52" rx="7" fill="#0b121d" stroke="#1e293b"/>
+    <g transform="translate(22, 108)">
+      <rect x="0" y="2" width="22" height="16" rx="3" fill="none" stroke="#38bdf8" stroke-width="1.4"/>
+      <circle cx="11" cy="10" r="4.2" fill="none" stroke="#38bdf8" stroke-width="1.4"/>
+      <path d="M 3 16 L 8 11 L 12 14 L 16 10 L 19 16" fill="none" stroke="#60a5fa" stroke-width="1.1"/>
+    </g>
+    <text x="54" y="115" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11.5" font-weight="600" fill="#f1f5f9">Forward Camera</text>
+    <text x="54" y="132" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9" fill="#94a3b8">image_02 · P_rect + R|T</text>
+  </g>
+
+  <!-- Arrow 1 -> 2 -->
+  <line x1="238" y1="121" x2="270" y2="121" stroke="#38bdf8" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <!-- STAGE 2: MPS FUSION -->
+  <g transform="translate(276, 42)">
+    <rect width="226" height="158" rx="10" fill="#101927" stroke="#2b7fff" stroke-opacity="0.8" stroke-width="1.3"/>
+    <text x="14" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" font-weight="700" fill="#60a5fa">2. FUSION PERCEPTION (MPS)</text>
+
+    <!-- RT-DETR -->
+    <rect x="12" y="34" width="202" height="42" rx="7" fill="#0b121d" stroke="#1e293b"/>
+    <rect x="20" y="45" width="19" height="19" rx="2" fill="none" stroke="#fb923c" stroke-width="1.4" stroke-dasharray="5 3"/>
+    <text x="46" y="52" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" font-weight="600" fill="#f1f5f9">RT-DETR R50</text>
+    <text x="46" y="67" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9" fill="#94a3b8">2D boxes → LiDAR PCA yaw</text>
+
+    <!-- Depth Anything V2 -->
+    <rect x="12" y="83" width="202" height="42" rx="7" fill="#0b121d" stroke="#1e293b"/>
+    <g transform="translate(20, 94)">
+      <rect x="0" y="0" width="19" height="19" rx="3" fill="#172554" stroke="#38bdf8" stroke-width="1.2"/>
+      <path d="M 3 14 L 8 8 L 12 11 L 16 5" fill="none" stroke="#5bf7cc" stroke-width="1.4"/>
+    </g>
+    <text x="46" y="101" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" font-weight="600" fill="#f1f5f9">Depth Anything V2</text>
+    <text x="46" y="116" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9" fill="#94a3b8">MAD metric road mesh + RGB</text>
+
+    <!-- Timing chip -->
+    <rect x="12" y="131" width="202" height="19" rx="5" fill="#132238"/>
+    <text x="113" y="143.5" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9" fill="#93c5fd">~400ms live · &lt;2ms cached JSON</text>
+  </g>
+
+  <!-- Arrow 2 -> 3 -->
+  <line x1="506" y1="121" x2="538" y2="121" stroke="#38bdf8" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <!-- STAGE 3: WEBGL COCKPIT -->
+  <g transform="translate(544, 42)">
+    <rect width="216" height="158" rx="10" fill="#101927" stroke="#22324a"/>
+    <text x="14" y="22" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" font-weight="700" fill="#fb923c">3. WEBGL COCKPIT HUD</text>
+
+    <!-- Stylized mini 3D FSD road viewport -->
+    <rect x="12" y="34" width="192" height="78" rx="7" fill="#070b12" stroke="#1e293b"/>
+    <!-- Shaded road mesh trapezoid -->
+    <polygon points="48,108 168,108 134,46 82,46" fill="url(#roadMesh)" stroke="#334155" stroke-width="0.8"/>
+    <!-- Mesh grid lines -->
+    <line x1="70" y1="68" x2="146" y2="68" stroke="#334155" stroke-width="0.7"/>
+    <line x1="59" y1="88" x2="157" y2="88" stroke="#334155" stroke-width="0.7"/>
+    <!-- Blue FSD path ribbon -->
+    <polygon points="94,108 122,108 113,48 103,48" fill="url(#pathGlow)"/>
+    <!-- 3D Detected Car box ahead right -->
+    <rect x="125" y="54" width="18" height="14" rx="2" fill="#38bdf8" fill-opacity="0.22" stroke="#60a5fa" stroke-width="1.2"/>
+    <!-- Detected Ped box left -->
+    <rect x="76" y="62" width="10" height="15" rx="2" fill="#fb923c" fill-opacity="0.22" stroke="#fb923c" stroke-width="1.2"/>
+    <!-- Ego vehicle at bottom -->
+    <polygon points="108,89 117,104 108,100 99,104" fill="#fb923c" stroke="#fed7aa" stroke-width="0.8"/>
+    <!-- Mini radar inset top right -->
+    <rect x="169" y="40" width="28" height="28" rx="4" fill="#0d1522" stroke="#334155"/>
+    <circle cx="183" cy="54" r="9" fill="none" stroke="#1e3a5f" stroke-width="0.9"/>
+    <circle cx="183" cy="54" r="2" fill="#fb923c"/>
+    <circle cx="187" cy="49" r="1.5" fill="#60a5fa"/>
+
+    <!-- Output pills -->
+    <text x="14" y="130" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="10.5" font-weight="600" fill="#e2e8f0">Road Mesh · 3D Cars · Dense Fill</text>
+    <text x="14" y="146" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9" fill="#94a3b8">Video+LiDAR · 3D Chase · BEV</text>
+  </g>
+</svg>

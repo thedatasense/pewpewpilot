@@ -802,6 +802,12 @@ html {
     min-height: 30px;
   }
 
+  #fsd-toggle[aria-pressed="true"] {
+    background: rgba(56, 189, 248, 0.22);
+    border-color: rgba(56, 189, 248, 0.65);
+    color: #e0f2fe;
+  }
+
   .inline-label {
     display: inline-flex;
     align-items: center;
@@ -1050,7 +1056,8 @@ html {
   }
   .play,
   .segments button[aria-pressed="true"],
-  #loop[aria-pressed="true"] {
+  #loop[aria-pressed="true"],
+  #fsd-toggle[aria-pressed="true"] {
     background: Highlight;
     color: HighlightText;
     border-color: Highlight;

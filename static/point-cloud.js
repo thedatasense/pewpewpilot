@@ -252,6 +252,109 @@ const meshFragment = `
   void main() { gl_FragColor = vColor; }
 `;
 
+const denseVertex = `
+  attribute vec3 pos;
+  attribute vec3 rgb;
+  uniform vec3 eye, right, up, forward;
+  uniform vec2 scale;
+  uniform float isTop, pointSize;
+  varying vec3 vColor;
+  void main() {
+    vec3 relative = pos - eye;
+    float z = dot(relative, forward);
+    vec2 xy = vec2(dot(relative, right), dot(relative, up)) * scale;
+    float w = mix(z, 1.0, isTop);
+    float depth = mix(1.00060018 * z - .30009003, (z - .15) / 499.85 * 2.0 - 1.0, isTop);
+    gl_Position = vec4(xy, depth, w);
+    gl_PointSize = pointSize;
+    vColor = rgb;
+  }
+`;
+
+const denseFragment = `
+  precision mediump float;
+  varying vec3 vColor;
+  void main() {
+    float d = length(gl_PointCoord - vec2(0.5));
+    if (d > 0.5) discard;
+    float alpha = smoothstep(0.5, 0.22, d) * 0.72;
+    gl_FragColor = vec4(vColor, alpha);
+  }
+`;
+
+function buildObjectMeshes(objects) {
+  if (!objects || !objects.length) return new Float32Array(0);
+  const verts = [];
+
+  function pushTri(a, b, c, color) {
+    verts.push(...a, ...color, ...b, ...color, ...c, ...color);
+  }
+  function pushQuad(a, b, c, d, color) {
+    pushTri(a, b, c, color);
+    pushTri(a, c, d, color);
+  }
+  function rotBox(cx, cy, cz, l, w, h, yaw, topCol, sideCol, backCol) {
+    const cs = Math.cos(yaw), sn = Math.sin(yaw);
+    const hl = l * 0.5, hw = w * 0.5, hh = h * 0.5;
+    const pt = (lx, ly, lz) => [cx + lx * cs - ly * sn, cy + lx * sn + ly * cs, cz + lz];
+    const p000 = pt(-hl, -hw, -hh), p100 = pt(hl, -hw, -hh);
+    const p110 = pt(hl, hw, -hh), p010 = pt(-hl, hw, -hh);
+    const p001 = pt(-hl, -hw, hh), p101 = pt(hl, -hw, hh);
+    const p111 = pt(hl, hw, hh), p011 = pt(-hl, hw, hh);
+    pushQuad(p001, p101, p111, p011, topCol);
+    pushQuad(p010, p110, p111, p011, sideCol);
+    pushQuad(p000, p001, p101, p100, sideCol);
+    pushQuad(p000, p010, p011, p001, backCol);
+    pushQuad(p100, p101, p111, p110, backCol);
+  }
+  function haloRing(cx, cy, z, rx, ry, innerCol, outerCol) {
+    const segs = 20;
+    for (let i = 0; i < segs; i++) {
+      const a0 = (i / segs) * Math.PI * 2;
+      const a1 = ((i + 1) / segs) * Math.PI * 2;
+      const p0i = [cx + Math.cos(a0) * rx * 0.72, cy + Math.sin(a0) * ry * 0.72, z];
+      const p1i = [cx + Math.cos(a1) * rx * 0.72, cy + Math.sin(a1) * ry * 0.72, z];
+      const p1o = [cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, z];
+      const p0o = [cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, z];
+      verts.push(...p0i, ...innerCol, ...p1i, ...innerCol, ...p1o, ...outerCol);
+      verts.push(...p0i, ...innerCol, ...p1o, ...outerCol, ...p0o, ...outerCol);
+    }
+  }
+
+  for (const obj of objects) {
+    const [cx, cy, cz] = obj.center;
+    const [l, w, h] = obj.size;
+    const yaw = obj.yaw || 0;
+    const zBase = cz - h * 0.5;
+
+    if (obj.label === 'person' || obj.label === 'dog') {
+      const torsoTop = [0.22, 0.85, 0.96, 0.92];
+      const torsoSide = [0.14, 0.62, 0.82, 0.88];
+      const headCol = [0.90, 0.96, 1.0, 0.96];
+      const bodyH = h * 0.72;
+      rotBox(cx, cy, zBase + bodyH * 0.5, 0.36, 0.46, bodyH, yaw, torsoTop, torsoSide, torsoSide);
+      rotBox(cx, cy, zBase + bodyH + h * 0.14, 0.28, 0.28, h * 0.24, yaw, headCol, headCol, headCol);
+      haloRing(cx, cy, ground + 0.03, 0.62, 0.62, [0.22, 0.85, 0.96, 0.55], [0.22, 0.85, 0.96, 0.0]);
+    } else if (obj.label === 'car' || obj.label === 'bus' || obj.label === 'truck') {
+      const isHeavy = obj.label !== 'car';
+      const topCol = isHeavy ? [0.68, 0.76, 0.86, 0.92] : [0.80, 0.86, 0.93, 0.92];
+      const sideCol = isHeavy ? [0.46, 0.54, 0.66, 0.88] : [0.56, 0.64, 0.75, 0.88];
+      const glassCol = [0.10, 0.16, 0.24, 0.94];
+      const lowH = h * 0.46;
+      const cabH = h * 0.44;
+      rotBox(cx, cy, zBase + lowH * 0.5 + 0.08, l, w, lowH, yaw, topCol, sideCol, sideCol);
+      rotBox(cx, cy, zBase + lowH + cabH * 0.5 + 0.08, l * (isHeavy ? 0.88 : 0.56), w * 0.82, cabH, yaw, topCol, glassCol, glassCol);
+      haloRing(cx, cy, ground + 0.025, l * 0.60, w * 0.72, [0.38, 0.68, 1.0, 0.34], [0.38, 0.68, 1.0, 0.0]);
+    } else if (obj.label === 'bicycle' || obj.label === 'motorcycle') {
+      rotBox(cx, cy, zBase + h * 0.35, l, 0.38, h * 0.55, yaw, [0.98, 0.75, 0.24, 0.90], [0.76, 0.54, 0.16, 0.85], [0.76, 0.54, 0.16, 0.85]);
+      haloRing(cx, cy, ground + 0.03, 0.95, 0.55, [0.98, 0.75, 0.24, 0.45], [0.98, 0.75, 0.24, 0.0]);
+    } else {
+      rotBox(cx, cy, cz, l, w, h, yaw, [0.98, 0.36, 0.42, 0.92], [0.78, 0.22, 0.28, 0.88], [0.78, 0.22, 0.28, 0.88]);
+    }
+  }
+  return new Float32Array(verts);
+}
+
 const vertexSource = `
   attribute vec4 point;
   attribute vec3 lineColor;
@@ -350,6 +453,20 @@ export function createPointRenderer(canvas) {
   gl.bindBuffer(gl.ARRAY_BUFFER, meshBuf);
   gl.bufferData(gl.ARRAY_BUFFER, egoMesh.data, gl.STATIC_DRAW);
 
+  const roadBuf = gl.createBuffer();
+  let roadCount = 0;
+  const objBuf = gl.createBuffer();
+  let objCount = 0;
+
+  const denseProg = makeProgram(gl, denseVertex, denseFragment);
+  const denseUniform = Object.fromEntries(
+    ['eye', 'right', 'up', 'forward', 'scale', 'isTop', 'pointSize'].map((n) => [n, gl.getUniformLocation(denseProg, n)]),
+  );
+  const densePosAttr = gl.getAttribLocation(denseProg, 'pos');
+  const denseRgbAttr = gl.getAttribLocation(denseProg, 'rgb');
+  const denseBuf = gl.createBuffer();
+  let denseCount = 0;
+
   const program = makeProgram(gl, vertexSource, fragmentSource);
   const uniform = Object.fromEntries([
     'eye', 'right', 'up', 'forward', 'scale', 'isTop', 'pointSize', 'maxRange', 'minHeight',
@@ -375,6 +492,32 @@ export function createPointRenderer(canvas) {
       gl.bufferData(gl.ARRAY_BUFFER, points, gl.DYNAMIC_DRAW);
       count = points.length / 4;
     },
+    uploadPerception(roadMesh, densePoints, objects) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, roadBuf);
+      if (roadMesh && roadMesh.length) {
+        gl.bufferData(gl.ARRAY_BUFFER, roadMesh, gl.DYNAMIC_DRAW);
+        roadCount = roadMesh.length / 7;
+      } else {
+        roadCount = 0;
+      }
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, denseBuf);
+      if (densePoints && densePoints.length) {
+        gl.bufferData(gl.ARRAY_BUFFER, densePoints, gl.DYNAMIC_DRAW);
+        denseCount = densePoints.length / 6;
+      } else {
+        denseCount = 0;
+      }
+
+      const objVerts = buildObjectMeshes(objects);
+      gl.bindBuffer(gl.ARRAY_BUFFER, objBuf);
+      if (objVerts.length) {
+        gl.bufferData(gl.ARRAY_BUFFER, objVerts, gl.DYNAMIC_DRAW);
+        objCount = objVerts.length / 7;
+      } else {
+        objCount = 0;
+      }
+    },
     draw(view, settings, ratio) {
       gl.viewport(0, 0, canvas.width, canvas.height);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -392,9 +535,28 @@ export function createPointRenderer(canvas) {
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       gl.disableVertexAttribArray(backdropPos);
 
-      // 2. Grid, distance arcs, axes, and LiDAR point cloud
+      // 1b. Smooth filled FSD road & terrain mesh
       gl.depthMask(true);
       gl.enable(gl.DEPTH_TEST);
+      if (settings.fsdRoad && roadCount > 0) {
+        gl.enable(gl.POLYGON_OFFSET_FILL);
+        gl.polygonOffset(1.0, 1.0);
+        gl.useProgram(meshProg);
+        for (const key of ['eye', 'right', 'up', 'forward']) gl.uniform3fv(meshUniform[key], view[key]);
+        gl.uniform2f(meshUniform.scale, view.scaleX, view.scaleY);
+        gl.uniform1f(meshUniform.isTop, Number(view.orthographic));
+        gl.bindBuffer(gl.ARRAY_BUFFER, roadBuf);
+        gl.enableVertexAttribArray(meshPosAttr);
+        gl.enableVertexAttribArray(meshColorAttr);
+        gl.vertexAttribPointer(meshPosAttr, 3, gl.FLOAT, false, 28, 0);
+        gl.vertexAttribPointer(meshColorAttr, 4, gl.FLOAT, false, 28, 12);
+        gl.drawArrays(gl.TRIANGLES, 0, roadCount);
+        gl.disableVertexAttribArray(meshPosAttr);
+        gl.disableVertexAttribArray(meshColorAttr);
+        gl.disable(gl.POLYGON_OFFSET_FILL);
+      }
+
+      // 2. Grid, distance arcs, axes, and LiDAR point cloud
       gl.useProgram(program);
       for (const key of ['eye', 'right', 'up', 'forward']) gl.uniform3fv(uniform[key], view[key]);
       gl.uniform2f(uniform.scale, view.scaleX, view.scaleY);
@@ -423,21 +585,48 @@ export function createPointRenderer(canvas) {
       gl.drawArrays(gl.POINTS, 0, count);
       gl.disableVertexAttribArray(point);
 
-      // 3. 3D Ego Car & Translucent Blue Forward Path Ribbon
-      if (settings.vehicle) {
+      // 2b. Dense Depth-Anything RGB-colored foreground completion points
+      if (settings.fsdDepthFill && denseCount > 0) {
+        gl.useProgram(denseProg);
+        for (const key of ['eye', 'right', 'up', 'forward']) gl.uniform3fv(denseUniform[key], view[key]);
+        gl.uniform2f(denseUniform.scale, view.scaleX, view.scaleY);
+        gl.uniform1f(denseUniform.isTop, Number(view.orthographic));
+        gl.uniform1f(denseUniform.pointSize, Math.max(2.2, settings.pointSize * 1.45) * ratio);
+        gl.bindBuffer(gl.ARRAY_BUFFER, denseBuf);
+        gl.enableVertexAttribArray(densePosAttr);
+        gl.enableVertexAttribArray(denseRgbAttr);
+        gl.vertexAttribPointer(densePosAttr, 3, gl.FLOAT, false, 24, 0);
+        gl.vertexAttribPointer(denseRgbAttr, 3, gl.FLOAT, false, 24, 12);
+        gl.drawArrays(gl.POINTS, 0, denseCount);
+        gl.disableVertexAttribArray(densePosAttr);
+        gl.disableVertexAttribArray(denseRgbAttr);
+      }
+
+      // 3. Detected 3D FSD Objects + Ego Car & Translucent Blue Forward Path Ribbon
+      if ((settings.fsdObjects && objCount > 0) || settings.vehicle) {
         gl.useProgram(meshProg);
         for (const key of ['eye', 'right', 'up', 'forward']) gl.uniform3fv(meshUniform[key], view[key]);
         gl.uniform2f(meshUniform.scale, view.scaleX, view.scaleY);
         gl.uniform1f(meshUniform.isTop, Number(view.orthographic));
-        gl.bindBuffer(gl.ARRAY_BUFFER, meshBuf);
         gl.enableVertexAttribArray(meshPosAttr);
         gl.enableVertexAttribArray(meshColorAttr);
-        gl.vertexAttribPointer(meshPosAttr, 3, gl.FLOAT, false, 28, 0);
-        gl.vertexAttribPointer(meshColorAttr, 4, gl.FLOAT, false, 28, 12);
-        gl.drawArrays(gl.TRIANGLES, 0, egoMesh.carCount);
-        gl.depthMask(false);
-        gl.drawArrays(gl.TRIANGLES, egoMesh.carCount, egoMesh.totalCount - egoMesh.carCount);
-        gl.depthMask(true);
+
+        if (settings.fsdObjects && objCount > 0) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, objBuf);
+          gl.vertexAttribPointer(meshPosAttr, 3, gl.FLOAT, false, 28, 0);
+          gl.vertexAttribPointer(meshColorAttr, 4, gl.FLOAT, false, 28, 12);
+          gl.drawArrays(gl.TRIANGLES, 0, objCount);
+        }
+
+        if (settings.vehicle) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, meshBuf);
+          gl.vertexAttribPointer(meshPosAttr, 3, gl.FLOAT, false, 28, 0);
+          gl.vertexAttribPointer(meshColorAttr, 4, gl.FLOAT, false, 28, 12);
+          gl.drawArrays(gl.TRIANGLES, 0, egoMesh.carCount);
+          gl.depthMask(false);
+          gl.drawArrays(gl.TRIANGLES, egoMesh.carCount, egoMesh.totalCount - egoMesh.carCount);
+          gl.depthMask(true);
+        }
         gl.disableVertexAttribArray(meshPosAttr);
         gl.disableVertexAttribArray(meshColorAttr);
       }
@@ -451,6 +640,7 @@ function createCanvasRenderer(canvas) {
   let points = new Float32Array();
   return {
     upload(values) { points = values; },
+    uploadPerception() {},
     draw(view, settings, ratio) {
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       ctx.fillStyle = '#0a0f17';

@@ -6,8 +6,8 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#070a0f">
   <title>PewPewPilot · Full Self-Guessing</title>
-  <link rel="stylesheet" href="/viewer.css?v=4">
-  <script type="module" src="/viewer.js?v=4"></script>
+  <link rel="stylesheet" href="/viewer.css?v=5">
+  <script type="module" src="/viewer.js?v=5"></script>
 </head>
 <body>
   <main class="cockpit" data-stage="video">
@@ -180,6 +180,7 @@
         </select>
       </label>
 
+      <button id="fsd-toggle" type="button" class="dock-btn" aria-pressed="true">FSD AI</button>
       <button type="button" class="dock-btn" popovertarget="settings-popover">Settings</button>
       <button type="button" class="dock-btn" popovertarget="telemetry-popover">Telemetry</button>
     </div>
@@ -216,7 +217,12 @@
       <div class="guides">
         <label for="grid"><input id="grid" type="checkbox" checked><span>Grid &amp; rings</span></label>
         <label for="vehicle"><input id="vehicle" type="checkbox" checked><span>Ego car &amp; path</span></label>
+        <label for="fsd-road"><input id="fsd-road" type="checkbox" checked><span>Smooth road</span></label>
+        <label for="fsd-depth"><input id="fsd-depth" type="checkbox" checked><span>Depth fill</span></label>
+        <label for="fsd-objects"><input id="fsd-objects" type="checkbox" checked><span>3D objects</span></label>
         <label for="axes"><input id="axes" type="checkbox"><span>Axes</span></label>
+        <button id="warmup-btn" type="button" class="quiet">Precompute 60f</button>
+        <span id="warmup-status" class="sub-mono" hidden></span>
         <button id="reset-settings" type="button" class="quiet">Reset all</button>
       </div>
     </div>
