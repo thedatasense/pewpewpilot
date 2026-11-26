@@ -3,6 +3,10 @@
 Interactive autonomous-cockpit sensor viewer for **128-channel Ouster LiDAR**, calibrated stereo cameras, and **local Apple Silicon CoreML perception**, powered by a **Rust (`axum` + `ort`) backend**. Compare the live forward camera (with LiDAR projection, AR drive path, and 2D detection brackets) alongside real-time 3D WebGL geometry rendered from **RT-DETR** + **Depth Anything V2** fused with raw laser returns.
 
 <p align="center">
+  <img src="docs/pewpew-driving.gif" alt="Live PewPewPilot driving run on Leaf Dodger Run switching between forward camera LiDAR overlay and 3D Chase view with real-time CoreML object detection" width="780">
+</p>
+
+<p align="center">
   <img src="docs/cockpit-demo.gif" alt="Live PewPewPilot cockpit view cycling through Video + LiDAR detection brackets and 3D Chase road mesh with detected vehicles" width="780">
 </p>
 
