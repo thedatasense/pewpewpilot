@@ -1,5 +1,7 @@
 data/
 durlar-railway/
+target/
+models/
 *.zip
 *.html
 __pycache__/

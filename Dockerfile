@@ -1,15 +1,24 @@
-FROM python:3.12-slim
+FROM rust:1-bookworm AS builder
+
+WORKDIR /build
+COPY Cargo.toml build.rs ./
+COPY src/ ./src/
+RUN cargo build --release
+
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1 \
+ENV HOST=0.0.0.0 \
+    PORT=8000 \
     DURLAR_READ_ONLY=1 \
     DURLAR_POINT_STRIDE=4
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Keep huggingface_hub available for `railway ssh -- python3 /app/download_durlar.py ...`
+RUN pip install --no-cache-dir huggingface_hub
 
-COPY app.py durlar_loader.py download_durlar.py generate_sample_data.py ./
+COPY --from=builder /build/target/release/durlar-server /app/durlar-server
+COPY download_durlar.py ./
 COPY static/ ./static/
 COPY calibration/ ./calibration/
 
-CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port \"${PORT:-8000}\""]
+CMD ["/app/durlar-server"]
