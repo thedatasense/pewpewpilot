@@ -5,9 +5,9 @@ const fieldOfView = 54 * radians;
 const ground = -1.68;
 
 export const palettes = {
-  range: ['#5bf7cc', '#38bdf8', '#6366f1'],
+  range: ['#5bf7cc', '#38bdf8', '#818cf8'],
   height: ['#64748b', '#38bdf8', '#fbbf24'],
-  intensity: ['#2563eb', '#c084fc', '#fde047'],
+  intensity: ['#3b82f6', '#c084fc', '#fde047'],
 };
 
 export function colorAt(value, mode) {
@@ -86,14 +86,14 @@ function lineGeometry() {
   }
   for (let i = -120; i <= 120; i += 4) {
     const major = i % 20 === 0;
-    const color = major ? [.14, .21, .31] : [.08, .12, .18];
+    const color = major ? [.13, .21, .33] : [.065, .105, .165];
     line(grid, [i, -120, ground], [i, 120, ground], color);
     line(grid, [-120, i, ground], [120, i, ground], color);
   }
   // Forward distance arcs on the road plane (10m, 20m, 35m, 50m)
   for (const radius of [10, 20, 35, 50]) {
-    const segs = 40;
-    const arcColor = radius === 20 ? [.18, .36, .58] : [.11, .19, .30];
+    const segs = 44;
+    const arcColor = radius === 20 ? [.18, .40, .65] : [.10, .19, .32];
     for (let s = 0; s < segs; s++) {
       const a0 = -Math.PI * 0.48 + (Math.PI * 0.96) * (s / segs);
       const a1 = -Math.PI * 0.48 + (Math.PI * 0.96) * ((s + 1) / segs);
@@ -107,8 +107,8 @@ function lineGeometry() {
   }
 
   // Subtle lane rail guides flanking the forward path corridor
-  line(vehicle, [1.2, -0.62, ground + 0.03], [32, -0.62, ground + 0.03], [0.16, 0.56, 0.98]);
-  line(vehicle, [1.2, 0.62, ground + 0.03], [32, 0.62, ground + 0.03], [0.16, 0.56, 0.98]);
+  line(vehicle, [1.2, -0.62, ground + 0.03], [32, -0.62, ground + 0.03], [0.22, 0.62, 1.0]);
+  line(vehicle, [1.2, 0.62, ground + 0.03], [32, 0.62, ground + 0.03], [0.22, 0.62, 1.0]);
 
   // Sensor axes
   line(axes, [0, 0, 0], [3.5, 0, 0], [1, .38, .38]);
@@ -126,54 +126,41 @@ function egoAndPathMeshes() {
     );
   }
   function box(x0, x1, y0, y1, z0, z1, topCol, sideCol, backCol, frontCol = sideCol) {
-    // Top, Bottom
     quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], topCol);
-    // Left (+Y), Right (-Y)
     quad([x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1], sideCol);
     quad([x0, y0, z0], [x0, y0, z1], [x1, y0, z1], [x1, y0, z0], sideCol);
-    // Rear (-X), Front (+X)
     quad([x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1], backCol);
     quad([x1, y0, z0], [x1, y0, z1], [x1, y1, z1], [x1, y1, z0], frontCol);
   }
 
-  // Dark metallic EV silhouette at origin (inspired by compact EV / FSD blue-slate car)
-  const bodyTop = [0.18, 0.30, 0.52, 1.0];
-  const bodySide = [0.11, 0.19, 0.34, 1.0];
-  const bodyRear = [0.14, 0.24, 0.42, 1.0];
-  const glass = [0.05, 0.08, 0.13, 1.0];
-  const wheel = [0.05, 0.06, 0.08, 1.0];
-  const roofLidar = [0.22, 0.74, 0.98, 1.0];
-  const tailLight = [1.0, 0.18, 0.28, 1.0];
-  const headLight = [0.85, 0.95, 1.0, 1.0];
+  const bodyTop = [0.20, 0.34, 0.58, 1.0];
+  const bodySide = [0.11, 0.20, 0.36, 1.0];
+  const bodyRear = [0.15, 0.26, 0.45, 1.0];
+  const glass = [0.05, 0.08, 0.14, 1.0];
+  const wheel = [0.04, 0.05, 0.07, 1.0];
+  const roofLidar = [0.24, 0.78, 1.0, 1.0];
+  const tailLight = [1.0, 0.20, 0.30, 1.0];
+  const headLight = [0.88, 0.96, 1.0, 1.0];
   const zBase = ground + 0.14;
 
-  // Lower chassis body
   box(-1.32, 1.38, -0.68, 0.68, zBase, zBase + 0.52, bodyTop, bodySide, bodyRear, bodySide);
-  // Sloped hood & bumper accent
   box(0.55, 1.42, -0.64, 0.64, zBase + 0.44, zBase + 0.58, bodyTop, bodySide, bodyRear, bodySide);
-  // Upper glasshouse / cabin
   box(-0.78, 0.62, -0.54, 0.54, zBase + 0.52, zBase + 1.18, bodyTop, glass, glass, glass);
-  // Roof LiDAR puck ("Spinny Hat" OS1-128 on roof)
-  box(-0.14, 0.14, -0.14, 0.14, zBase + 1.18, zBase + 1.38, roofLidar, [0.15, 0.22, 0.32, 1.0], [0.15, 0.22, 0.32, 1.0]);
-  // Wheels
+  box(-0.14, 0.14, -0.14, 0.14, zBase + 1.18, zBase + 1.38, roofLidar, [0.15, 0.24, 0.36, 1.0], [0.15, 0.24, 0.36, 1.0]);
   for (const wx of [-0.88, 0.88]) {
     for (const wy of [-0.70, 0.58]) {
       box(wx - 0.25, wx + 0.25, wy, wy + 0.12, ground + 0.02, zBase + 0.34, wheel, wheel, wheel);
     }
   }
-  // Glowing LED taillights on rear (-X)
   quad([-1.33, -0.60, zBase + 0.36], [-1.33, -0.26, zBase + 0.36], [-1.33, -0.26, zBase + 0.46], [-1.33, -0.60, zBase + 0.46], tailLight);
   quad([-1.33, 0.26, zBase + 0.36], [-1.33, 0.60, zBase + 0.36], [-1.33, 0.60, zBase + 0.46], [-1.33, 0.26, zBase + 0.46], tailLight);
-  // Subtle front headlights (+X)
   quad([1.43, -0.58, zBase + 0.34], [1.43, -0.28, zBase + 0.34], [1.43, -0.28, zBase + 0.44], [1.43, -0.58, zBase + 0.44], headLight);
   quad([1.43, 0.28, zBase + 0.34], [1.43, 0.58, zBase + 0.34], [1.43, 0.58, zBase + 0.44], [1.43, 0.28, zBase + 0.44], headLight);
 
-  // Subtle dark shadow pad under vehicle
   quad([-1.55, -0.82, ground + 0.015], [1.58, -0.82, ground + 0.015], [1.58, 0.82, ground + 0.015], [-1.55, 0.82, ground + 0.015], [0.02, 0.03, 0.05, 0.88]);
 
   const carVertexCount = verts.length / 7;
 
-  // Glowing translucent FSD blue forward trajectory ribbon
   const segs = 24;
   const startX = 1.35;
   const endX = 34.0;
@@ -182,10 +169,10 @@ function egoAndPathMeshes() {
     const t1 = (i + 1) / segs;
     const x0 = startX + (endX - startX) * t0;
     const x1 = startX + (endX - startX) * t1;
-    const a0 = 0.64 * Math.pow(1 - t0, 1.35);
-    const a1 = 0.64 * Math.pow(1 - t1, 1.35);
-    const c0 = [0.16, 0.56, 1.0, a0];
-    const c1 = [0.16, 0.56, 1.0, a1];
+    const a0 = 0.66 * Math.pow(1 - t0, 1.35);
+    const a1 = 0.66 * Math.pow(1 - t1, 1.35);
+    const c0 = [0.18, 0.58, 1.0, a0];
+    const c1 = [0.18, 0.58, 1.0, a1];
     quad([x0, -0.58, ground + 0.025], [x1, -0.58, ground + 0.025], [x1, 0.58, ground + 0.025], [x0, 0.58, ground + 0.025], c0, c1, c1, c0);
   }
 
@@ -213,17 +200,18 @@ const backdropFragment = `
   varying vec2 ndc;
   void main() {
     if (isTop > 0.5) {
-      gl_FragColor = vec4(0.035, 0.05, 0.075, 1.0);
+      float vig = 1.0 - 0.25 * dot(ndc, ndc);
+      gl_FragColor = vec4(vec3(0.03, 0.048, 0.078) * vig, 1.0);
       return;
     }
     vec3 ray = normalize(forward + right * (ndc.x / max(0.001, scale.x)) + up * (ndc.y / max(0.001, scale.y)));
     float elev = ray.z;
-    vec3 skyTop = vec3(0.035, 0.055, 0.095);
-    vec3 horizon = vec3(0.105, 0.165, 0.245);
-    vec3 asphalt = vec3(0.04, 0.055, 0.08);
+    vec3 skyTop = vec3(0.028, 0.048, 0.088);
+    vec3 horizon = vec3(0.11, 0.18, 0.28);
+    vec3 asphalt = vec3(0.032, 0.048, 0.075);
     vec3 col = elev >= 0.0
-      ? mix(horizon, skyTop, smoothstep(0.0, 0.42, elev))
-      : mix(horizon, asphalt, smoothstep(0.0, 0.16, -elev));
+      ? mix(horizon, skyTop, smoothstep(0.0, 0.40, elev))
+      : mix(horizon, asphalt, smoothstep(0.0, 0.15, -elev));
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -277,7 +265,7 @@ const denseFragment = `
   void main() {
     float d = length(gl_PointCoord - vec2(0.5));
     if (d > 0.5) discard;
-    float alpha = smoothstep(0.5, 0.22, d) * 0.72;
+    float alpha = smoothstep(0.5, 0.22, d) * 0.74;
     gl_FragColor = vec4(vColor, alpha);
   }
 `;
@@ -308,7 +296,7 @@ function buildObjectMeshes(objects) {
     pushQuad(p100, p101, p111, p110, backCol);
   }
   function haloRing(cx, cy, z, rx, ry, innerCol, outerCol) {
-    const segs = 20;
+    const segs = 22;
     for (let i = 0; i < segs; i++) {
       const a0 = (i / segs) * Math.PI * 2;
       const a1 = ((i + 1) / segs) * Math.PI * 2;
@@ -328,28 +316,29 @@ function buildObjectMeshes(objects) {
     const zBase = cz - h * 0.5;
 
     if (obj.label === 'person' || obj.label === 'dog') {
-      const torsoTop = [0.22, 0.85, 0.96, 0.92];
-      const torsoSide = [0.14, 0.62, 0.82, 0.88];
-      const headCol = [0.90, 0.96, 1.0, 0.96];
+      const torsoTop = [0.98, 0.62, 0.28, 0.94];
+      const torsoSide = [0.82, 0.44, 0.16, 0.90];
+      const headCol = [1.0, 0.88, 0.72, 0.96];
       const bodyH = h * 0.72;
       rotBox(cx, cy, zBase + bodyH * 0.5, 0.36, 0.46, bodyH, yaw, torsoTop, torsoSide, torsoSide);
       rotBox(cx, cy, zBase + bodyH + h * 0.14, 0.28, 0.28, h * 0.24, yaw, headCol, headCol, headCol);
-      haloRing(cx, cy, ground + 0.03, 0.62, 0.62, [0.22, 0.85, 0.96, 0.55], [0.22, 0.85, 0.96, 0.0]);
+      haloRing(cx, cy, ground + 0.03, 0.65, 0.65, [0.98, 0.58, 0.24, 0.58], [0.98, 0.58, 0.24, 0.0]);
     } else if (obj.label === 'car' || obj.label === 'bus' || obj.label === 'truck') {
       const isHeavy = obj.label !== 'car';
-      const topCol = isHeavy ? [0.68, 0.76, 0.86, 0.92] : [0.80, 0.86, 0.93, 0.92];
-      const sideCol = isHeavy ? [0.46, 0.54, 0.66, 0.88] : [0.56, 0.64, 0.75, 0.88];
-      const glassCol = [0.10, 0.16, 0.24, 0.94];
+      const topCol = isHeavy ? [0.72, 0.80, 0.90, 0.94] : [0.84, 0.90, 0.97, 0.94];
+      const sideCol = isHeavy ? [0.46, 0.56, 0.70, 0.90] : [0.56, 0.66, 0.79, 0.90];
+      const backCol = isHeavy ? [0.38, 0.48, 0.62, 0.90] : [0.48, 0.58, 0.72, 0.90];
+      const glassCol = [0.10, 0.16, 0.26, 0.95];
       const lowH = h * 0.46;
       const cabH = h * 0.44;
-      rotBox(cx, cy, zBase + lowH * 0.5 + 0.08, l, w, lowH, yaw, topCol, sideCol, sideCol);
+      rotBox(cx, cy, zBase + lowH * 0.5 + 0.08, l, w, lowH, yaw, topCol, sideCol, backCol);
       rotBox(cx, cy, zBase + lowH + cabH * 0.5 + 0.08, l * (isHeavy ? 0.88 : 0.56), w * 0.82, cabH, yaw, topCol, glassCol, glassCol);
-      haloRing(cx, cy, ground + 0.025, l * 0.60, w * 0.72, [0.38, 0.68, 1.0, 0.34], [0.38, 0.68, 1.0, 0.0]);
+      haloRing(cx, cy, ground + 0.025, l * 0.60, w * 0.72, [0.38, 0.72, 1.0, 0.38], [0.38, 0.72, 1.0, 0.0]);
     } else if (obj.label === 'bicycle' || obj.label === 'motorcycle') {
-      rotBox(cx, cy, zBase + h * 0.35, l, 0.38, h * 0.55, yaw, [0.98, 0.75, 0.24, 0.90], [0.76, 0.54, 0.16, 0.85], [0.76, 0.54, 0.16, 0.85]);
-      haloRing(cx, cy, ground + 0.03, 0.95, 0.55, [0.98, 0.75, 0.24, 0.45], [0.98, 0.75, 0.24, 0.0]);
+      rotBox(cx, cy, zBase + h * 0.35, l, 0.38, h * 0.55, yaw, [0.20, 0.88, 0.96, 0.92], [0.14, 0.66, 0.78, 0.88], [0.14, 0.66, 0.78, 0.88]);
+      haloRing(cx, cy, ground + 0.03, 0.95, 0.55, [0.20, 0.88, 0.96, 0.48], [0.20, 0.88, 0.96, 0.0]);
     } else {
-      rotBox(cx, cy, cz, l, w, h, yaw, [0.98, 0.36, 0.42, 0.92], [0.78, 0.22, 0.28, 0.88], [0.78, 0.22, 0.28, 0.88]);
+      rotBox(cx, cy, cz, l, w, h, yaw, [0.98, 0.82, 0.22, 0.94], [0.80, 0.64, 0.14, 0.88], [0.80, 0.64, 0.14, 0.88]);
     }
   }
   return new Float32Array(verts);
@@ -385,10 +374,9 @@ const vertexSource = `
     if (mode == 2) value = sqrt(clamp(point.w / maxIntensity, 0.0, 1.0));
     float level = clamp(value, 0.0, 1.0) * 2.0;
     vec3 base = level < 1.0 ? mix(lowColor, midColor, level) : mix(midColor, highColor, level - 1.0);
-    // Subtle dark asphalt separation for ground returns so obstacles & vehicles pop in chase view
     float groundMask = 1.0 - smoothstep(-1.42, -1.24, point.z);
     if (mode != 2) {
-      base = mix(base, vec3(0.14, 0.20, 0.29), groundMask * 0.62);
+      base = mix(base, vec3(0.13, 0.20, 0.30), groundMask * 0.62);
     } else {
       base = mix(base, base * 0.55 + vec3(0.05, 0.07, 0.11), groundMask * 0.45);
     }
@@ -407,8 +395,9 @@ const fragmentSource = `
     }
     float d = length(gl_PointCoord - vec2(0.5));
     if (d > 0.5) discard;
-    float alpha = smoothstep(0.5, 0.24, d);
-    gl_FragColor = vec4(color, alpha);
+    float core = smoothstep(0.5, 0.18, d);
+    vec3 lit = mix(color, min(vec3(1.0), color * 1.22), smoothstep(0.32, 0.0, d));
+    gl_FragColor = vec4(lit, core);
   }
 `;
 
@@ -482,7 +471,7 @@ export function createPointRenderer(canvas) {
     return { name, buffer: lineBuffer, count: data.length / 6 };
   });
   let count = 0;
-  gl.clearColor(0.035, 0.05, 0.075, 1);
+  gl.clearColor(0.03, 0.048, 0.075, 1);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -522,7 +511,6 @@ export function createPointRenderer(canvas) {
       gl.viewport(0, 0, canvas.width, canvas.height);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-      // 1. Atmospheric sky/horizon/asphalt backdrop
       gl.disable(gl.DEPTH_TEST);
       gl.depthMask(false);
       gl.useProgram(backdropProg);
@@ -535,7 +523,6 @@ export function createPointRenderer(canvas) {
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       gl.disableVertexAttribArray(backdropPos);
 
-      // 1b. Smooth filled FSD road & terrain mesh
       gl.depthMask(true);
       gl.enable(gl.DEPTH_TEST);
       if (settings.fsdRoad && roadCount > 0) {
@@ -556,7 +543,6 @@ export function createPointRenderer(canvas) {
         gl.disable(gl.POLYGON_OFFSET_FILL);
       }
 
-      // 2. Grid, distance arcs, axes, and LiDAR point cloud
       gl.useProgram(program);
       for (const key of ['eye', 'right', 'up', 'forward']) gl.uniform3fv(uniform[key], view[key]);
       gl.uniform2f(uniform.scale, view.scaleX, view.scaleY);
@@ -585,7 +571,6 @@ export function createPointRenderer(canvas) {
       gl.drawArrays(gl.POINTS, 0, count);
       gl.disableVertexAttribArray(point);
 
-      // 2b. Dense Depth-Anything RGB-colored foreground completion points
       if (settings.fsdDepthFill && denseCount > 0) {
         gl.useProgram(denseProg);
         for (const key of ['eye', 'right', 'up', 'forward']) gl.uniform3fv(denseUniform[key], view[key]);
@@ -602,7 +587,6 @@ export function createPointRenderer(canvas) {
         gl.disableVertexAttribArray(denseRgbAttr);
       }
 
-      // 3. Detected 3D FSD Objects + Ego Car & Translucent Blue Forward Path Ribbon
       if ((settings.fsdObjects && objCount > 0) || settings.vehicle) {
         gl.useProgram(meshProg);
         for (const key of ['eye', 'right', 'up', 'forward']) gl.uniform3fv(meshUniform[key], view[key]);
@@ -643,7 +627,7 @@ function createCanvasRenderer(canvas) {
     uploadPerception() {},
     draw(view, settings, ratio) {
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-      ctx.fillStyle = '#0a0f17';
+      ctx.fillStyle = '#070b12';
       ctx.fillRect(0, 0, view.width, view.height);
       for (const [name, data] of Object.entries(guides)) {
         if (!settings[name]) continue;

@@ -20,6 +20,12 @@ Interactive autonomous-cockpit sensor viewer for **128-channel Ouster LiDAR**, c
 2. **CoreML ONNX Runtime + Native Rust 3D Fusion ([`src/perception.rs`](src/perception.rs))**: Executes `Depth-Anything-V2-Small-hf` and `PekingU/rtdetr_r50vd` via `ort` (CoreML Execution Provider on Apple Neural Engine / Metal GPU), aligns affine depth to metric LiDAR returns via 2-stage MAD-trimmed least squares, pairs 2D detections with clustered LiDAR PCA heading angles, and caches JSON geometry (`road_mesh`, `dense_points`, `objects`) under `data/<sequence>/perception/` (`< 0.5 ms` once cached).
 3. **WebGL Cockpit HUD ([`static/point-cloud.js`](static/point-cloud.js), [`static/viewer.js`](static/viewer.js))**: Combines full-bleed `Video + LiDAR` overlay with an expandable `3D Chase` / `BEV Radar` PIP, smooth shaded 3D terrain mesh, oriented 3D cars/pedestrians/signs, and dense foreground RGB completion.
 
+### Depth Anything V2
+
+Depth Anything v2 is a foundation model for monocular depth estimation. It maintains the strengths and rectifies the weaknesses of the original Depth Anything by refining the powerful data curation engine and teacher-student pipeline.
+
+To train a teacher model, Depth Anything v2 uses purely synthetic, computer-generated images. This avoids problems created by using real images, which can limit monocular depth-estimation model performance due to noisy annotations and low resolution. The teacher model predicts depth information on unlabeled real images, and then uses only that new, pseudo-labeled data to train a student model. This helps avoid distribution shift between synthetic and real images.
+
 ## Start the viewer
 
 Build and launch the Rust server (requires [Rust](https://rustup.rs)):

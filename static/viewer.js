@@ -1,10 +1,14 @@
 import {
   palettes, colorAt, preset, viewTransform, screenPoint, resizeCanvas,
   createPointRenderer, cameraProjection, projectWorldPoint, imagePoint,
-} from './point-cloud.js?v=5';
+} from './point-cloud.js?v=6';
 
 if (!Object.hasOwn(HTMLElement.prototype, 'popover')) {
   import('https://unpkg.com/@oddbird/popover-polyfill@latest/dist/popover.min.js').catch(() => {});
+}
+
+if (!('switch' in HTMLInputElement.prototype)) {
+  document.documentElement.classList.add('no-native-switch');
 }
 
 const $ = (id) => document.getElementById(id);
@@ -22,10 +26,17 @@ const lightProbeContext = lightProbe.getContext('2d', { willReadFrequently: true
 const emptyPoints = new Float32Array();
 const emptyFloats = new Float32Array();
 const imageTypes = {
-  image_02: ['Forward camera', 'Image 02 · color'],
-  image_01: ['Forward camera', 'Image 01 · monochrome'],
-  ambient: ['Ambient panorama', 'Roof lidar · 360° ambient light'],
-  reflec: ['Reflectivity panorama', 'Roof lidar · 360° surface returns'],
+  image_02: ['Forward camera', 'Image 02 · RGB stereo'],
+  image_01: ['Forward camera', 'Image 01 · Monochrome'],
+  ambient: ['Ambient panorama', 'OS1-128 · 360° near-IR'],
+  reflec: ['Reflectivity panorama', 'OS1-128 · 360° surface'],
+};
+const viewLabels = {
+  chase: '3D CHASE',
+  top: 'BEV RADAR',
+  ego: 'ROOF HOOD',
+  front: 'FRONT LOOK',
+  orbit: '3D ORBIT',
 };
 const routeAliases = {
   DurLAR_20210716_S: 'Jul 16 · Summer Curb Crawl',
@@ -51,6 +62,19 @@ const state = {
 const pointCache = new Map();
 const perceptionCache = new Map();
 let settings;
+
+function syncSliderVars(slider) {
+  if (!slider) return;
+  slider.style.setProperty('--attr-min', slider.min || 0);
+  slider.style.setProperty('--attr-max', slider.max || 100);
+  slider.style.setProperty('--control-value', slider.value || 0);
+}
+
+function syncAllSliders() {
+  for (const id of ['timeline', ...Object.keys(sliders)]) {
+    syncSliderVars($(id));
+  }
+}
 
 function decodeFloat32B64(b64) {
   if (!b64) return emptyFloats;
@@ -81,7 +105,9 @@ function readSettings() {
     fsdObjects: fsdAi && ($('fsd-objects')?.checked ?? true),
   };
   for (const [id, unit] of Object.entries(sliders)) {
-    document.querySelector(`output[for="${id}"]`).value = $(id).value + unit;
+    const out = document.querySelector(`output[for="${id}"]`);
+    if (out) out.value = $(id).value + unit;
+    syncSliderVars($(id));
   }
   const legends = {
     range: ['Distance', '0 m', `${settings.maxRange} m`],
@@ -100,22 +126,66 @@ function readSettings() {
   }
 }
 
+const perceptionPalette = {
+  person: { stroke: '#fb923c', fill: 'rgba(251, 146, 60, 0.88)', boxFill: 'rgba(251, 146, 60, 0.11)', kind: 'person' },
+  dog: { stroke: '#fb923c', fill: 'rgba(251, 146, 60, 0.88)', boxFill: 'rgba(251, 146, 60, 0.11)', kind: 'person' },
+  bicycle: { stroke: '#22d3ee', fill: 'rgba(34, 211, 238, 0.88)', boxFill: 'rgba(34, 211, 238, 0.10)', kind: 'cycle' },
+  motorcycle: { stroke: '#22d3ee', fill: 'rgba(34, 211, 238, 0.88)', boxFill: 'rgba(34, 211, 238, 0.10)', kind: 'cycle' },
+  'traffic light': { stroke: '#facc15', fill: 'rgba(250, 204, 21, 0.88)', boxFill: 'rgba(250, 204, 21, 0.09)', kind: 'sign' },
+  'stop sign': { stroke: '#facc15', fill: 'rgba(250, 204, 21, 0.88)', boxFill: 'rgba(250, 204, 21, 0.09)', kind: 'sign' },
+};
+const defaultPerceptionStyle = {
+  stroke: '#60a5fa', fill: 'rgba(96, 165, 250, 0.84)', boxFill: 'rgba(56, 189, 248, 0.10)', kind: 'vehicle',
+};
+const perceptionStyle = (label) => perceptionPalette[label] || defaultPerceptionStyle;
+
+function updateDetectionPills(perc) {
+  const wrap = $('hud-detections');
+  if (!wrap) return;
+  const objects = settings?.fsdAi && settings?.fsdObjects ? perc?.objects : null;
+  if (!objects?.length) {
+    wrap.hidden = true;
+    wrap.replaceChildren();
+    return;
+  }
+  const counts = new Map();
+  for (const obj of objects) {
+    counts.set(obj.label, (counts.get(obj.label) || 0) + 1);
+  }
+  wrap.replaceChildren(...Array.from(counts.entries()).map(([label, n]) => {
+    const pill = document.createElement('span');
+    pill.className = 'det-pill';
+    const dot = document.createElement('i');
+    dot.style.background = perceptionStyle(label).stroke;
+    pill.append(dot, `${n} ${label.toUpperCase()}${n > 1 && !label.endsWith('s') ? 'S' : ''}`);
+    return pill;
+  }));
+  wrap.hidden = false;
+}
+
 function updateRouteSubtitle() {
   const raw = state.frame?.raw || emptyPoints;
+  const aiChip = $('hud-ai-chip');
   if (!raw.length) {
     $('hud-route-sub').textContent = 'OS1-128 · Waiting for returns';
+    if (aiChip) aiChip.hidden = true;
     return;
   }
   const returnsCount = (state.points.length / 4).toLocaleString();
   const perc = settings.fsdAi ? state.frame?.perception : null;
   if (!perc) {
-    $('hud-route-sub').textContent = `OS1-128 · ${returnsCount} returns`;
+    $('hud-route-sub').textContent = `OS1-128 · ${returnsCount} filtered returns`;
+    if (aiChip) aiChip.hidden = true;
     return;
   }
-  const dev = (perc.device || 'ai').toUpperCase();
-  const timing = perc.cached ? 'cached' : `${Math.round(perc.inference_ms || 0)}ms`;
+  const dev = (perc.device || 'ai').split(' ')[0].toUpperCase();
+  const timing = perc.cached ? 'CACHED' : `${Math.round(perc.inference_ms || 0)}MS`;
   const count = perc.objects?.length || 0;
-  $('hud-route-sub').textContent = `OS1-128 · ${returnsCount} pts · ${count} obj · ${dev} ${timing}`;
+  if (aiChip) {
+    aiChip.textContent = `${dev} · ${timing}`;
+    aiChip.hidden = false;
+  }
+  $('hud-route-sub').textContent = `${returnsCount} pts · ${count} 3D object${count === 1 ? '' : 's'}`;
 }
 
 function filterPoints() {
@@ -168,53 +238,67 @@ function drawCloud() {
   }
 }
 
-const perceptionPalette = {
-  person: { stroke: '#fb923c', fill: 'rgba(251, 146, 60, 0.85)', boxFill: 'rgba(251, 146, 60, 0.10)', kind: 'person' },
-  bicycle: { stroke: '#22d3ee', fill: 'rgba(34, 211, 238, 0.85)', boxFill: 'rgba(34, 211, 238, 0.10)', kind: 'cycle' },
-  motorcycle: { stroke: '#22d3ee', fill: 'rgba(34, 211, 238, 0.85)', boxFill: 'rgba(34, 211, 238, 0.10)', kind: 'cycle' },
-  'traffic light': { stroke: '#facc15', fill: 'rgba(250, 204, 21, 0.85)', boxFill: 'rgba(250, 204, 21, 0.08)', kind: 'sign' },
-  'stop sign': { stroke: '#facc15', fill: 'rgba(250, 204, 21, 0.85)', boxFill: 'rgba(250, 204, 21, 0.08)', kind: 'sign' },
-};
-const defaultPerceptionStyle = {
-  stroke: '#60a5fa', fill: 'rgba(96, 165, 250, 0.80)', boxFill: 'rgba(56, 189, 248, 0.09)', kind: 'vehicle',
-};
-const perceptionStyle = (label) => perceptionPalette[label] || defaultPerceptionStyle;
-
 function drawMinimap() {
   const { width, height, ratio } = resizeCanvas(minimap);
   if (!width || !height) return;
   const ctx = minimapContext;
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  ctx.fillStyle = '#080d14';
+
+  // Subtle tactical sonar radial background
+  const bgGrad = ctx.createRadialGradient(width * 0.5, height * 0.68, 4, width * 0.5, height * 0.68, height * 0.8);
+  bgGrad.addColorStop(0, '#0c1624');
+  bgGrad.addColorStop(1, '#060a11');
+  ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, width, height);
 
   const cx = width * 0.5;
-  const cy = height * 0.68;
+  const cy = height * 0.70;
   const pxPerMeter = height / 44;
 
+  // Forward camera ~62° horizontal FOV frustum wedge
+  const fovHalf = (31 * Math.PI) / 180;
+  const fovRadius = 34 * pxPerMeter;
+  const fovGrad = ctx.createRadialGradient(cx, cy, 4, cx, cy, fovRadius);
+  fovGrad.addColorStop(0, 'rgba(56, 189, 248, 0.20)');
+  fovGrad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+  ctx.fillStyle = fovGrad;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.arc(cx, cy, fovRadius, -Math.PI / 2 - fovHalf, -Math.PI / 2 + fovHalf);
+  ctx.closePath();
+  ctx.fill();
+
+  // Concentric metric radar rings
   ctx.strokeStyle = 'rgba(148, 163, 184, 0.16)';
   ctx.lineWidth = 1;
+  ctx.font = '600 8px ui-monospace, SFMono-Regular, monospace';
+  ctx.fillStyle = 'rgba(148, 163, 184, 0.42)';
   for (const r of [10, 20, 30]) {
+    const rad = r * pxPerMeter;
     ctx.beginPath();
-    ctx.arc(cx, cy, r * pxPerMeter, 0, Math.PI * 2);
+    ctx.arc(cx, cy, rad, 0, Math.PI * 2);
     ctx.stroke();
+    if (cy - rad > 8) {
+      ctx.fillText(`${r}m`, cx + 3, cy - rad + 8);
+    }
   }
 
+  // Ego trajectory beam
   const grad = ctx.createLinearGradient(cx, cy, cx, cy - 28 * pxPerMeter);
-  grad.addColorStop(0, 'rgba(43, 127, 255, 0.55)');
-  grad.addColorStop(1, 'rgba(43, 127, 255, 0.0)');
+  grad.addColorStop(0, 'rgba(59, 130, 246, 0.58)');
+  grad.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
   ctx.fillStyle = grad;
-  ctx.fillRect(cx - 0.65 * pxPerMeter, cy - 28 * pxPerMeter, 1.3 * pxPerMeter, 28 * pxPerMeter);
+  ctx.fillRect(cx - 0.62 * pxPerMeter, cy - 28 * pxPerMeter, 1.24 * pxPerMeter, 28 * pxPerMeter);
 
   const pts = state.points;
-  const step = Math.max(1, Math.floor(pts.length / 4 / 3500)) * 4;
+  const step = Math.max(1, Math.floor(pts.length / 4 / 3800)) * 4;
   for (let i = 0; i < pts.length; i += step) {
     const x = pts[i], y = pts[i + 1], z = pts[i + 2];
     const mx = cx - y * pxPerMeter;
     const my = cy - x * pxPerMeter;
     if (mx < 0 || mx >= width || my < 0 || my >= height) continue;
-    ctx.fillStyle = z > -1.32 ? 'rgba(91, 247, 204, 0.72)' : 'rgba(71, 85, 105, 0.35)';
-    ctx.fillRect(mx, my, 1.5, 1.5);
+    ctx.fillStyle = z > -1.32 ? 'rgba(91, 247, 204, 0.78)' : 'rgba(71, 85, 105, 0.32)';
+    ctx.fillRect(mx, my, 1.4, 1.4);
   }
 
   const objects = settings.fsdAi && settings.fsdObjects ? state.frame?.perception?.objects : null;
@@ -230,7 +314,7 @@ function drawMinimap() {
         ctx.beginPath();
         ctx.arc(mx, my, 3, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = 'rgba(251, 146, 60, 0.45)';
+        ctx.strokeStyle = 'rgba(251, 146, 60, 0.52)';
         ctx.beginPath();
         ctx.arc(mx, my, 5.5, 0, Math.PI * 2);
         ctx.stroke();
@@ -254,30 +338,51 @@ function drawMinimap() {
     }
   }
 
-  ctx.fillStyle = '#fb923c';
+  // Ego vehicle chevron
+  ctx.fillStyle = '#38bdf8';
   ctx.beginPath();
   ctx.moveTo(cx, cy - 7);
   ctx.lineTo(cx + 5, cy + 5);
-  ctx.lineTo(cx, cy + 2);
+  ctx.lineTo(cx, cy + 2.2);
   ctx.lineTo(cx - 5, cy + 5);
   ctx.closePath();
   ctx.fill();
 }
 
-function drawCameraDetections(ctx, perception, ox, oy, scale, isMain) {
+function drawRoundedPill(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(x, y, w, h, r);
+  } else {
+    ctx.rect(x, y, w, h);
+  }
+}
+
+function drawCameraDetections(ctx, perception, ox, oy, scale, canvasW, canvasH, isMain) {
   ctx.save();
-  ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  ctx.font = '650 10.5px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
   ctx.textBaseline = 'middle';
+
   for (const obj of perception.objects) {
     const box = obj.box2d;
     if (!box || box.length < 4) continue;
-    const x1 = ox + box[0] * scale;
-    const y1 = oy + box[1] * scale;
-    const w = (box[2] - box[0]) * scale;
-    const h = (box[3] - box[1]) * scale;
-    if (w < 4 || h < 4) continue;
+    const rawX1 = ox + box[0] * scale;
+    const rawY1 = oy + box[1] * scale;
+    const rawX2 = ox + box[2] * scale;
+    const rawY2 = oy + box[3] * scale;
+    if (rawX2 < 2 || rawY2 < 2 || rawX1 > canvasW - 2 || rawY1 > canvasH - 2) continue;
+
+    // Clamp visible box inside viewport so cover-cropped edge detections never clip off-screen
+    const x1 = Math.max(4, rawX1);
+    const y1 = Math.max(4, rawY1);
+    const x2 = Math.min(canvasW - 4, rawX2);
+    const y2 = Math.min(canvasH - 4, rawY2);
+    const w = x2 - x1;
+    const h = y2 - y1;
+    if (w < 6 || h < 6) continue;
+
     const st = perceptionStyle(obj.label);
-    const arm = Math.max(5, Math.min(13, w * 0.24, h * 0.24));
+    const arm = Math.max(5, Math.min(14, w * 0.24, h * 0.24));
 
     if (isMain) {
       ctx.fillStyle = st.boxFill;
@@ -285,7 +390,7 @@ function drawCameraDetections(ctx, perception, ox, oy, scale, isMain) {
     }
 
     ctx.strokeStyle = st.stroke;
-    ctx.lineWidth = isMain ? 1.8 : 1.25;
+    ctx.lineWidth = isMain ? 1.9 : 1.3;
     ctx.beginPath();
     ctx.moveTo(x1, y1 + arm); ctx.lineTo(x1, y1); ctx.lineTo(x1 + arm, y1);
     ctx.moveTo(x1 + w - arm, y1); ctx.lineTo(x1 + w, y1); ctx.lineTo(x1 + w, y1 + arm);
@@ -295,16 +400,19 @@ function drawCameraDetections(ctx, perception, ox, oy, scale, isMain) {
 
     if (!isMain && w < 28) continue;
     const dist = obj.center ? Math.hypot(obj.center[0], obj.center[1]) : null;
-    const tag = dist !== null ? `${obj.label.toUpperCase()} ${dist.toFixed(1)}m` : obj.label.toUpperCase();
-    const tw = ctx.measureText(tag).width + 10;
-    const ty = Math.max(4, y1 - 18);
-    ctx.fillStyle = 'rgba(8, 13, 20, 0.84)';
-    ctx.fillRect(x1, ty, tw, 16);
+    const tag = dist !== null ? `${obj.label.toUpperCase()} · ${dist.toFixed(1)}m` : obj.label.toUpperCase();
+    const tw = ctx.measureText(tag).width + 12;
+    const tx = Math.max(8, Math.min(canvasW - tw - 8, x1));
+    const ty = y1 > 26 ? y1 - 21 : Math.min(canvasH - 22, y1 + 4);
+
+    ctx.fillStyle = 'rgba(6, 11, 18, 0.88)';
+    drawRoundedPill(ctx, tx, ty, tw, 17, 5);
+    ctx.fill();
     ctx.strokeStyle = st.stroke;
     ctx.lineWidth = 1;
-    ctx.strokeRect(x1, ty, tw, 16);
+    ctx.stroke();
     ctx.fillStyle = '#f8fafc';
-    ctx.fillText(tag, x1 + 5, ty + 8.5);
+    ctx.fillText(tag, tx + 6, ty + 9);
   }
   ctx.restore();
 }
@@ -312,20 +420,26 @@ function drawCameraDetections(ctx, perception, ox, oy, scale, isMain) {
 function drawCameraPathRibbon(ctx, projection, ox, oy, scale) {
   const left = [];
   const right = [];
+  const rungs = [];
   const zGround = -1.68;
   for (let x = 2.6; x <= 30.0; x += 2.6) {
     const pL = projectWorldPoint(x, 0.58, zGround, projection);
     const pR = projectWorldPoint(x, -0.58, zGround, projection);
     if (!pL || !pR) continue;
-    left.push([ox + pL[0] * scale, oy + pL[1] * scale]);
-    right.push([ox + pR[0] * scale, oy + pR[1] * scale]);
+    const sL = [ox + pL[0] * scale, oy + pL[1] * scale];
+    const sR = [ox + pR[0] * scale, oy + pR[1] * scale];
+    left.push(sL);
+    right.push(sR);
+    if (Math.abs(x - 7.8) < 0.5 || Math.abs(x - 15.6) < 0.5 || Math.abs(x - 23.4) < 0.5) {
+      rungs.push([sL, sR]);
+    }
   }
   if (left.length < 2) return;
 
   const first = left[0], last = left[left.length - 1];
   const grad = ctx.createLinearGradient(first[0], first[1], last[0], last[1]);
-  grad.addColorStop(0, 'rgba(43, 127, 255, 0.38)');
-  grad.addColorStop(0.65, 'rgba(56, 189, 248, 0.22)');
+  grad.addColorStop(0, 'rgba(37, 99, 235, 0.40)');
+  grad.addColorStop(0.6, 'rgba(56, 189, 248, 0.22)');
   grad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
 
   ctx.save();
@@ -337,8 +451,18 @@ function drawCameraPathRibbon(ctx, projection, ox, oy, scale) {
   ctx.closePath();
   ctx.fill();
 
-  ctx.strokeStyle = 'rgba(96, 165, 250, 0.55)';
-  ctx.lineWidth = 1.5;
+  // Subtle AR distance cross-rungs along corridor
+  ctx.strokeStyle = 'rgba(125, 211, 252, 0.26)';
+  ctx.lineWidth = 1;
+  for (const [a, b] of rungs) {
+    ctx.beginPath();
+    ctx.moveTo(a[0], a[1]);
+    ctx.lineTo(b[0], b[1]);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = 'rgba(96, 165, 250, 0.62)';
+  ctx.lineWidth = 1.6;
   ctx.beginPath();
   ctx.moveTo(left[0][0], left[0][1]);
   for (let i = 1; i < left.length; i++) ctx.lineTo(left[i][0], left[i][1]);
@@ -363,7 +487,7 @@ function drawCamera() {
   $('image-size').hidden = !image;
   $('camera-empty').hidden = !!image;
   $('projection-hint').textContent = canProject
-    ? (overlay.checked ? 'Projected lasers follow active palette & filters.' : 'Enable Project lasers to overlay 3D returns.')
+    ? (overlay.checked ? 'Projected lasers follow active palette & filters.' : 'Enable Lasers to overlay 3D returns.')
     : !image ? 'Camera feed unavailable.'
     : !frame.modality.startsWith('image') ? '360° cylindrical scan captured directly by roof LiDAR.'
     : !frame.raw.length ? 'No laser returns for this frame.' : 'Camera calibration unavailable.';
@@ -439,7 +563,7 @@ function drawCamera() {
   }
 
   if (settings.fsdAi && settings.fsdObjects && frame.modality === 'image_02' && frame.perception?.objects?.length) {
-    drawCameraDetections(cameraContext, frame.perception, x, y, scale, isMainVideo);
+    drawCameraDetections(cameraContext, frame.perception, x, y, scale, width, height, isMainVideo);
   }
 
   const selected = state.selected < 0 ? null : imagePoint(state.points, state.selected, projection, image.width, image.height);
@@ -450,10 +574,14 @@ function drawCamera() {
 
 function drawMeasurement(projected) {
   const i = state.selected;
-  $('measurement').hidden = i < 0;
-  $('clear-point').hidden = i < 0;
-  if (i < 0) {
-    $('inspection-help').textContent = 'Click any dot in the scan to inspect distance & match it across views.';
+  const active = i >= 0;
+  $('trip-card').dataset.inspecting = String(active);
+  $('measurement').hidden = !active;
+  $('clear-point').hidden = !active;
+  $('projection-hint').hidden = !active;
+  $('inspection-title').textContent = active ? 'Selected Return' : 'Laser Telemetry';
+  if (!active) {
+    $('inspection-help').textContent = 'Click any dot in camera or 3D view to measure metric coordinates.';
     return;
   }
   const [x, y, z, intensity] = state.points.subarray(i, i + 4);
@@ -462,8 +590,8 @@ function drawMeasurement(projected) {
   $('measure-left').textContent = `${y.toFixed(2)} m`;
   $('measure-height').textContent = `${z.toFixed(2)} m`;
   $('measure-intensity').textContent = intensity.toFixed(1);
-  $('inspection-help').textContent = projected ? 'Selected return matches across both camera and 3D views.'
-    : state.imageTransform ? 'Selected return falls outside the forward camera FOV.' : 'Camera projection is unavailable for this sensor view.';
+  $('inspection-help').textContent = projected ? 'Matched across both forward camera and 3D views.'
+    : state.imageTransform ? 'Return lies outside the forward camera field of view.' : 'Camera projection unavailable for panoramic sensor.';
 }
 
 function draw() {
@@ -505,7 +633,15 @@ function pick(canvas, event) {
   draw();
 }
 
-function setView(name) {
+function updatePipBadge() {
+  const badge = $('pip-mode-badge');
+  if (!badge) return;
+  badge.textContent = state.stageMode === 'video'
+    ? (viewLabels[state.view.name] || '3D VIEW')
+    : 'CAM PIP';
+}
+
+function applyStageDom(name) {
   const mainStage = $('main-stage');
   const pipSlot = $('pip-slot');
   const cloudScene = $('cloud-scene');
@@ -528,7 +664,26 @@ function setView(name) {
   });
   document.querySelector('.cockpit').dataset.stage = state.stageMode;
   $('orientation').hidden = state.stageMode !== '3d' || state.view.name !== 'top';
+  updatePipBadge();
   draw();
+}
+
+function setView(name, routeFocus = false) {
+  const nextStage = name === 'video' ? 'video' : '3d';
+  const stageSwapping = nextStage !== state.stageMode;
+
+  if (!stageSwapping || !document.startViewTransition) {
+    applyStageDom(name);
+    if (routeFocus) $('cockpit-main')?.focus({ preventScroll: true });
+    return;
+  }
+
+  const transition = document.startViewTransition(() => {
+    applyStageDom(name);
+  });
+  transition.finished.finally(() => {
+    if (routeFocus) $('cockpit-main')?.focus({ preventScroll: true });
+  });
 }
 
 let drag = null;
@@ -663,13 +818,42 @@ function estimateImageLight(image) {
 function updateDriveHud(frame) {
   const gps = frame?.telemetry?.gps;
   const lux = frame?.telemetry?.lux?.lux;
+  const speedEl = $('hud-speed');
+  const unitEl = $('hud-speed-unit');
+  const badgeEl = $('hud-speed-badge');
+  speedEl.removeAttribute('data-alert');
+
   if (Number.isFinite(gps?.speed_kmh)) {
     const speed = state.speedUnit === 'mph' ? gps.speed_kmh * 0.621371 : gps.speed_kmh;
-    $('hud-speed').textContent = Math.round(speed);
-    $('hud-speed-unit').textContent = state.speedUnit === 'mph' ? 'MPH' : 'KM/H';
+    speedEl.textContent = Math.round(speed);
+    unitEl.textContent = state.speedUnit === 'mph' ? 'MPH · LIVE GPS' : 'KM/H · LIVE GPS';
+    if (badgeEl) badgeEl.textContent = '128 LASERS';
   } else {
-    $('hud-speed').textContent = '—';
-    $('hud-speed-unit').textContent = 'NO GPS';
+    // Smart fallback for recorded LiDAR drives without GPS: highlight nearest 3D object or live beam density
+    const objs = settings?.fsdAi && settings?.fsdObjects ? frame?.perception?.objects : null;
+    let nearest = null;
+    if (objs?.length) {
+      for (const obj of objs) {
+        if (!obj.center) continue;
+        const d = Math.hypot(obj.center[0], obj.center[1]);
+        if (!nearest || d < nearest.dist) nearest = { dist: d, label: obj.label };
+      }
+    }
+    if (nearest) {
+      speedEl.textContent = `${nearest.dist.toFixed(1)}m`;
+      if (nearest.dist < 10) speedEl.dataset.alert = 'near';
+      unitEl.textContent = `NEAREST · ${nearest.label.toUpperCase()}`;
+      if (badgeEl) badgeEl.textContent = 'OS1-128 · 3D FUSION';
+    } else if (state.points.length) {
+      const kPts = (state.points.length / 4 / 1000).toFixed(1);
+      speedEl.textContent = `${kPts}k`;
+      unitEl.textContent = 'ACTIVE RETURNS';
+      if (badgeEl) badgeEl.textContent = 'OS1-128 · 360°';
+    } else {
+      speedEl.textContent = '—';
+      unitEl.textContent = 'READY';
+      if (badgeEl) badgeEl.textContent = 'OS1-128 · 360°';
+    }
   }
 
   if (Number.isFinite(lux)) {
@@ -749,6 +933,7 @@ function applyPerceptionToScene(frame) {
   } else {
     renderer.uploadPerception(emptyFloats, emptyFloats, []);
   }
+  updateDetectionPills(perc);
   updateRouteSubtitle();
 }
 
@@ -799,6 +984,7 @@ function replaceFrame(frame) {
   $('camera-empty').textContent = frame ? 'No image for this sensor in this frame.' : 'Loading camera…';
   $('frame-id').value = frame?.id || '······';
   $('frame-position').textContent = `${frame ? frame.index + 1 : 0} / ${state.info?.frames.length || 0}`;
+  syncSliderVars($('timeline'));
   draw();
 }
 
@@ -814,6 +1000,7 @@ async function selectFrame(index) {
   state.requestedIndex = index;
   $('timeline').value = index;
   $('timeline').setAttribute('aria-valuetext', `Frame ${id}, ${index + 1} of ${frames.length}`);
+  syncSliderVars($('timeline'));
   setStatus('');
   const base = `/api/sequence/${encodeURIComponent(sequence)}/frame/${encodeURIComponent(id)}`;
   if (state.prefetch?.base && state.prefetch.base !== base) {
@@ -878,16 +1065,18 @@ async function selectSequence(id) {
   $('cloud-empty').textContent = 'Waking up the roof lasers…';
   $('source').hidden = true;
   $('timeline').value = 0;
+  syncSliderVars($('timeline'));
   setStatus('');
   try {
     const info = await request(`/api/sequence/${encodeURIComponent(id)}/info`, controller.signal).then((response) => response.json());
     if (controller.signal.aborted) return;
     state.info = info;
     $('source').textContent = id === 'sample_durlar_sequence'
-      ? 'Fake Sim'
-      : /^DurLAR_\d{8}_S$/.test(id) ? 'Real Lasers' : 'Local Route';
+      ? 'Sim Data'
+      : /^DurLAR_\d{8}_S$/.test(id) ? 'Real Drive' : 'Local Route';
     $('source').hidden = false;
     $('timeline').max = Math.max(0, info.frames.length - 1);
+    syncSliderVars($('timeline'));
     updateControls();
     refreshPerceptionStatus(id);
     if (info.frames.length) await selectFrame(0);
@@ -909,11 +1098,14 @@ function updateTelemetry(data) {
     ['Latitude', fixed(data?.gps?.latitude, 5, '°')],
     ['Longitude', fixed(data?.gps?.longitude, 5, '°')],
     ['Altitude', fixed(data?.gps?.altitude, 1, ' m')],
-    ['Light level', fixed(data?.lux?.lux, 1, ' lux')],
-    ['Acceleration (x, y, z)', vector(data?.imu, ['accel_x', 'accel_y', 'accel_z'], 2, ' m/s²')],
-    ['Angular velocity (x, y, z)', vector(data?.imu, ['gyro_x', 'gyro_y', 'gyro_z'], 3, ' rad/s')],
+    ['Ambient light', fixed(data?.lux?.lux, 1, ' lux')],
+    ['Linear accel (x, y, z)', vector(data?.imu, ['accel_x', 'accel_y', 'accel_z'], 2, ' m/s²')],
+    ['Angular rate (x, y, z)', vector(data?.imu, ['gyro_x', 'gyro_y', 'gyro_z'], 3, ' rad/s')],
   ].filter(([, value]) => value);
-  $('telemetry').replaceChildren(...(rows.length ? rows : [['No GPS/IMU/Lux telemetry in this exemplar sequence.', 'Frame & 128-beam LiDAR stats stay live in the HUD.']]).map(([label, value]) => {
+  $('telemetry').replaceChildren(...(rows.length ? rows : [
+    ['Sensor mode', 'Ouster OS1-128 + MultiSense S21'],
+    ['GNSS / IMU', 'Not recorded in DurLAR_S exemplar subset'],
+  ]).map(([label, value]) => {
     const field = document.createElement('div');
     const name = document.createElement('dt');
     const reading = document.createElement('dd');
@@ -968,6 +1160,29 @@ function togglePlay() {
   schedule(100 / Number($('speed').value), ++state.playbackRun);
 }
 
+function toggleFsdAi() {
+  const button = $('fsd-toggle');
+  if (!button) return;
+  const enabled = button.getAttribute('aria-pressed') === 'false';
+  button.setAttribute('aria-pressed', String(enabled));
+  readSettings();
+  if (!enabled) {
+    state.prefetch?.controller.abort();
+    state.prefetch = null;
+    applyPerceptionToScene(state.frame);
+    updateDriveHud(state.frame);
+    draw();
+    return;
+  }
+  if (state.frame && !state.frame.perception && !document.getElementById('sample-data')) {
+    selectFrame(state.requestedIndex);
+  } else {
+    applyPerceptionToScene(state.frame);
+    updateDriveHud(state.frame);
+    draw();
+  }
+}
+
 async function loadSequences() {
   try {
     const { sequences } = await request('/api/sequences').then((response) => response.json());
@@ -996,9 +1211,14 @@ async function loadSequences() {
 for (const button of document.querySelectorAll('[data-view]')) {
   button.addEventListener('click', () => setView(button.dataset.view));
 }
+$('speed-toggle')?.addEventListener('click', () => {
+  state.speedUnit = state.speedUnit === 'kmh' ? 'mph' : 'kmh';
+  updateDriveHud(state.frame);
+});
 $('reset-view').addEventListener('click', () => {
   if (state.stageMode === 'video') {
     state.view = preset('chase');
+    updatePipBadge();
     draw();
   } else {
     setView(state.view.name);
@@ -1008,7 +1228,7 @@ $('minimap-toggle').addEventListener('click', () => {
   setView(state.stageMode === '3d' && state.view.name === 'top' ? 'video' : 'top');
 });
 $('swap-stage').addEventListener('click', () => {
-  setView(state.stageMode === 'video' ? state.view.name : 'video');
+  setView(state.stageMode === 'video' ? state.view.name : 'video', true);
 });
 $('expand-camera').addEventListener('click', () => {
   const card = $('camera-card');
@@ -1022,7 +1242,10 @@ $('sequence').addEventListener('change', () => selectSequence($('sequence').valu
 $('modality').addEventListener('change', () => seek(state.requestedIndex));
 $('overlay').addEventListener('change', draw);
 $('clear-point').addEventListener('click', () => { state.selected = -1; draw(); });
-$('timeline').addEventListener('input', () => seek(Number($('timeline').value)));
+$('timeline').addEventListener('input', () => {
+  syncSliderVars($('timeline'));
+  seek(Number($('timeline').value));
+});
 $('previous').addEventListener('click', () => seek(state.requestedIndex - 1));
 $('next').addEventListener('click', () => seek(state.requestedIndex + 1));
 $('play').addEventListener('click', togglePlay);
@@ -1030,32 +1253,14 @@ $('loop').addEventListener('click', () => {
   const button = $('loop');
   button.setAttribute('aria-pressed', String(button.getAttribute('aria-pressed') === 'false'));
 });
-$('fsd-toggle')?.addEventListener('click', () => {
-  const button = $('fsd-toggle');
-  const enabled = button.getAttribute('aria-pressed') === 'false';
-  button.setAttribute('aria-pressed', String(enabled));
-  readSettings();
-  if (!enabled) {
-    state.prefetch?.controller.abort();
-    state.prefetch = null;
-    applyPerceptionToScene(state.frame);
-    draw();
-    return;
-  }
-  if (state.frame && !state.frame.perception && !document.getElementById('sample-data')) {
-    selectFrame(state.requestedIndex);
-  } else {
-    applyPerceptionToScene(state.frame);
-    draw();
-  }
-});
+$('fsd-toggle')?.addEventListener('click', toggleFsdAi);
 $('warmup-btn')?.addEventListener('click', async () => {
   if (!state.info || document.getElementById('sample-data')) return;
   const seqId = state.info.id;
   const btn = $('warmup-btn');
   const statusEl = $('warmup-status');
   btn.disabled = true;
-  statusEl.textContent = 'Starting 60-frame MPS warmup…';
+  statusEl.textContent = 'Starting 60-frame CoreML warmup…';
   try {
     const resp = await fetch(`/api/sequence/${encodeURIComponent(seqId)}/perception/warmup?start=${state.requestedIndex}&count=60`, { method: 'POST' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -1096,6 +1301,10 @@ for (const id of ['range', 'min-height', 'max-height', 'intensity', 'stride', 'c
   $(id)?.addEventListener('input', () => {
     readSettings();
     if (['range', 'min-height', 'max-height', 'intensity', 'stride'].includes(id) && state.frame) filterPoints();
+    if (['fsd-objects'].includes(id)) {
+      updateDetectionPills(settings.fsdAi ? state.frame?.perception : null);
+      updateDriveHud(state.frame);
+    }
     draw();
   });
 }
@@ -1114,6 +1323,7 @@ $('reset-settings').addEventListener('click', () => {
   }
   applyPerceptionToScene(state.frame);
   filterPoints();
+  updateDriveHud(state.frame);
   draw();
 });
 window.addEventListener('keydown', (event) => {
@@ -1124,6 +1334,11 @@ window.addEventListener('keydown', (event) => {
   } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
     event.preventDefault();
     seek(state.requestedIndex + (event.key === 'ArrowLeft' ? -1 : 1));
+  } else if (event.key >= '1' && event.key <= '5') {
+    const map = ['video', 'chase', 'top', 'ego', 'front'];
+    setView(map[Number(event.key) - 1], true);
+  } else if (event.key === 'f' || event.key === 'F') {
+    toggleFsdAi();
   }
 });
 const resize = new ResizeObserver(draw);
@@ -1134,6 +1349,8 @@ cloud.addEventListener('webglcontextlost', (event) => {
   setStatus('The point cloud lost its graphics context. Reload the page to restore it.');
 });
 readSettings();
+syncAllSliders();
+updatePipBadge();
 renderer.upload(emptyPoints);
 renderer.uploadPerception(emptyFloats, emptyFloats, []);
 loadSequences();
